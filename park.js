@@ -53,17 +53,6 @@ export async function openPark(source, seed = 0) {
     },
     /** Sends `n` guests up the road to the gate (`Park::send_guests`); how many set out. */
     sendGuests: (n) => x.lf_send_guests(n),
-    /** What is under art pixel (`ax`, `ay`): `{kind, id}` with kind 1 a guest, 2 a ride, 3 a stall, or null on bare ground. Reads only. */
-    pick(ax, ay) {
-      const kind = x.lf_pick(Math.round(ax), Math.round(ay));
-      return kind ? { kind, id: x.lf_pick_id() } : null;
-    },
-    /** The small card of a thing `pick` named: `{rows, rect: {x0, y0, x1, y1}}` (rect in art pixels), or null once it is gone. */
-    card(kind, id) {
-      if (!x.lf_card(kind, id)) return null;
-      const r = new Int32Array(x.memory.buffer, x.lf_card_rect(), 4);
-      return { rows: text(x.lf_card_text(), x.lf_card_text_len()).split("\n"), rect: { x0: r[0], y0: r[1], x1: r[2], y1: r[3] } };
-    },
     /** The stat rows, "Money: $1,000" and "Guests: 12". */
     /** Sales at every stall so far: a scripted run reads it to know a guest has bought. */
     sales: () => x.lf_sales(),

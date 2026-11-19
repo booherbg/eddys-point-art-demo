@@ -91,8 +91,8 @@ export class Hands {
   }
 
   /**
-   * A lift: `{tap: tile}` when it was a tap with a tool held (it builds), `{look: art}` when it was a tap with none held (the small
-   * card looks at what is under it; `art` is the art pixel `p.art`), else null (a pan).
+   * A lift: `{tap: tile}` when it was a tap with a tool held (it builds), else null (a pan, or a tap with no tool held, which
+   * does nothing: Blaine, 2026-11-18, a status card on a tap "just gets in the way").
    */
   up(p) {
     const d = this.pressed;
@@ -101,7 +101,7 @@ export class Hands {
     if (d.touch) this.cursor = null;
     if (d.moved) return null;
     if (this.tool !== null) return p.tile ? { tap: p.tile } : null;
-    return p.art ? { look: p.art } : null;
+    return null;
   }
 
   /** The pointer left the page. */

@@ -12,13 +12,15 @@ import { fpsRow, prepRows, wasmMemoryRow, jsHeapRow, jsHeapBytes, spriteCacheRow
 import { openPark } from "./park.js";
 import { Scene, Camera, wheelStep, parseTable, makeAtlas, GroundAtlases, RECORD } from "./scene.js";
 import { SPEEDS, OPENING, tileAt, diamond, Hands, Prefetch } from "./play.js";
-import { CardState, makeCard, beside } from "./card.js";
 import { heldGroup, heldButton } from "./bar.js";
 import { TOOLS, START, tapTray, tapTool, tapRemove, labelOfTool, isRide, makeBuildBar } from "./trays.js";
 import { makePanel } from "./panel.js";
+import { makeWorkersPanel, snapshot, workerTaps, clearCache } from "./workers.js";
 
 const q = new URLSearchParams(location.search);
-const workers = Number(q.get("workers")) || detectWorkerCount();
+/** The count the browser suggests (the Workers panel's Suggested and Reset), and the one the page starts with (`?workers=` overrides only that). */
+const suggested = detectWorkerCount();
+const workers = Number(q.get("workers")) || suggested;
 const slow = Number(q.get("slow") || 0);
 const showStats = q.has("stats");
 
@@ -86,7 +88,7 @@ function press(e) {
   const s = scale();
   const view = camera.view(canvas.width, canvas.height, pixelRatio());
   const art = { x: view.x + (e.clientX * dprNow()) / s, y: view.y + (e.clientY * dprNow()) / s };
-  return { id: e.pointerId, sx: e.clientX, sy: e.clientY, tile: tileAt(art.x, art.y), art, touch: e.pointerType !== "mouse" };
+  return { id: e.pointerId, sx: e.clientX, sy: e.clientY, tile: tileAt(art.x, art.y), touch: e.pointerType !== "mouse" };
 }
 addEventListener("pointerdown", () => line.classList.add("gone"), { capture: true });
 canvas.addEventListener("pointerdown", (e) => {
@@ -105,8 +107,7 @@ canvas.addEventListener("pointermove", (e) => {
 const end = (e) => {
   canvas.classList.remove("drag");
   const r = hands.up(press(e));
-  if (r?.tap) build(r.tap);
-  else if (r?.look) cardState.tap(hands.tool, r.look, (x, y) => api.pick(x, y)); // no tool held: the small card for what is under the tap, or closed on bare ground
+  if (r?.tap) build(r.tap); // no tool held: a tap does nothing
 };
 canvas.addEventListener("pointerup", end);
 canvas.addEventListener("pointercancel", (e) => {
@@ -115,37 +116,6 @@ canvas.addEventListener("pointercancel", (e) => {
 });
 canvas.addEventListener("pointerleave", (e) => {
   if (e.pointerType === "mouse") hands.cursor = null;
-});
-
-// ---- the small card: with no tool held, a tap on a guest, a ride or a stall opens it beside what she tapped; the view never moves ----
-const cardState = new CardState();
-const card = makeCard(document, document.body);
-let cardSide = null;
-/** The card's words from the sim each frame, set beside its thing; gone when the thing is. */
-function showCard(view) {
-  const open = cardState.open;
-  const got = open && api.card(open.kind, open.id);
-  if (!got) {
-    cardState.close();
-    card.hide();
-    cardSide = null;
-    return;
-  }
-  card.show(got.rows);
-  const s = scale();
-  const dpr = dprNow();
-  const r = got.rect;
-  const px = (ax, ay) => [((ax - view.x) * s) / dpr, ((ay - view.y) * s) / dpr];
-  const [x0, y0] = px(r.x0, r.y0);
-  const [x1, y1] = px(r.x1, r.y1);
-  // The space the bars leave: the top bar's 44 px, the bottom bar's and an open tray's.
-  const screen = { x0: 8, y0: 52, x1: innerWidth - 8, y1: innerHeight - (tray.open !== null && tray.open !== TOOLS ? 128 : 70) };
-  const at = beside(screen, { x0, y0, x1, y1 }, card.size(), cardSide);
-  cardSide = at.side;
-  card.at(at.x, at.y);
-}
-addEventListener("keydown", (e) => {
-  if (e.key === "Escape") cardState.close();
 });
 
 /** The tap: the sim's own command, free to refuse. The view stays where it is. */
@@ -163,7 +133,6 @@ const trayEl = document.getElementById("tray");
 let tray = START;
 const toolName = (t) => labelOfTool(t);
 function sync() {
-  cardState.close(); // a tray, a tool or Tools is a new thing in her hand: the card goes
   hands.tool = tray.tool;
   hands.cursor = null;
   buildBar.set(tray);
@@ -214,8 +183,35 @@ const panelEl = document.getElementById("panel");
 const panel = makePanel(document, panelEl, {
   onDetail: (step) => (detail = step, panel.setDetail(detail), clock.start(nowS())),
   onAddGuests: () => console.log(`lf-sent ${api.sendGuests(10)}`),
+  onWorkers: () => (workersPanel.isOpen ? shutWorkers() : openWorkers()),
 });
 panel.setDetail(detail);
+// ---- the Workers panel (Task 28): its button in the Tools tray is held while it is open; the panel stays up until she shuts it (its Close, or
+// the button again), reads the pool a few times a second while open and nothing while shut. - and + change the pool's size live ----
+const cores = Number.isFinite(navigator.hardwareConcurrency) ? navigator.hardwareConcurrency : 1;
+const say = (why) => {
+  flash = { line: why, until: performance.now() + 1600, ok: false };
+};
+const workersPanel = makeWorkersPanel(document, document.body, {
+  read: () => snapshot({ pool, order, cores, suggested, detail }),
+  taps: workerTaps({
+    pool,
+    suggested,
+    detail: () => detail,
+    clear: () => clearCache({ sprites, pool, clock, now: nowS() }),
+    say,
+    refresh: () => workersPanel.refresh(nowS()),
+    close: () => shutWorkers(),
+  }),
+});
+function openWorkers() {
+  workersPanel.open(nowS());
+  panel.setWorkers(true);
+}
+function shutWorkers() {
+  workersPanel.shut();
+  panel.setWorkers(false);
+}
 const toolsButton = heldButton(document, TOOLS, () => ((tray = tapTray(tray, TOOLS)), sync()));
 document.getElementById("topright").append(toolsButton);
 sync();
@@ -249,16 +245,18 @@ lf.rideNames = () => {
   for (let o = 0; o + RECORD <= rec.length; o += RECORD) if (rec[o + 11] >= 0) out.push({ name: table.entries[rec[o]].name, x: rec[o + 1], y: rec[o + 2] });
   return out;
 };
-// Read-only, for the card's shots (Task 27): the art-pixel anchors of the draw list's sprites whose names start with `prefix`, and the
-// words on the open card (null when none is open). A run opens a card by a tap on the map, never by these.
+// Read-only, for the shots' aim (Task 27): the art-pixel anchors of the draw list's sprites whose names start with `prefix`.
 lf.items = (prefix) => {
   const rec = api.drawList({ x: -4000, y: -1000, w: 8000, h: 4000 });
   const out = [];
   for (let o = 0; o + RECORD <= rec.length; o += RECORD) if (table.entries[rec[o]].name.startsWith(prefix)) out.push({ name: table.entries[rec[o]].name, x: rec[o + 1], y: rec[o + 2], ride: rec[o + 11] });
   return out;
 };
-lf.card = () => (cardState.open ? card.words().filter(Boolean) : null);
 lf.detail = () => detail;
+// Read-only, for the first screen's time (Task 32): how many of its names each family holds, and whether the family is slow (so it waits).
+lf.firstFamilies = () => { const n = {}; for (const name of scene.first ?? []) { const f = table.entries.find((e) => e.name === name)?.family; n[f] = (n[f] || 0) + 1; } return Object.entries(n).map(([f, c]) => `${f}: ${c}${order.slow(f) ? " (slow)" : ""}`).join(", "); };
+// Read-only: the Workers panel's words, whole, in order (null while it is shut).
+lf.workersPanel = () => (workersPanel.isOpen ? workersPanel.words() : null);
 // Read-only: the sprites the last frame drew, and how many of them at a step under the Detail row's (stand-ins and sketches).
 lf.cache = () => ({ bytes: sprites.bytes, cap, fineBytes: sprites.fineBytes, held: sprites.mem.size, blocked: sprites.blockedCount() });
 lf.sharp = () => ({ onScreen: scene.stats.items, below: scene.stats.below, belowNames: scene.stats.belowNames });
@@ -287,7 +285,7 @@ function overlay(t) {
     jsHeapRow(jsHeapBytes(performance)),
     spriteCacheRow(sprites.bytes, cap),
     `Sprite ms: ${(pool.stats.ms / Math.max(1, pool.stats.drawn)).toFixed(1)}`,
-    `Workers: ${workers}`,
+    `Workers: ${pool.size}`,
     ...prepRows(order.prep),
     fpsRow(frames.all),
     `Frame ms: ${mean(frames.all).toFixed(1)} (95th ${p95(frames.all).toFixed(1)}, worst ${worst(frames.all).toFixed(1)})`,
@@ -383,12 +381,12 @@ function loop() {
   const t = nowS();
   scene.frame(ctx, view, t, { zoom: camera.zoom, detail });
   showSharpening(t);
+  workersPanel.frame(t);
   if (tray.open === TOOLS && t - panelAt > 0.25) {
     panelAt = t;
     panel.setStats({ ...sprites.cost(), wait: clock.seconds(t) });
   }
   const verdict = drawGhost(ctx, view);
-  showCard(view);
   showRows(verdict);
   if (scene.firstDoneAt !== null && !q.has("noprefetch")) for (const r of prefetch.take(true, view)) pool.request(r);
 

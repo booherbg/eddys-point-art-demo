@@ -211,6 +211,32 @@ export class Sprites {
     }
   }
 
+  /**
+   * Drops every finer picture held (density above 1) so the view draws them again (the Workers panel's Clear cache, Task 28): the game's size of each
+   * stays and stands in, so nothing goes blank, and the order may be asked for each again (`onEvict`). Her worn pictures made from a dropped
+   * one go with it. A picture still on its way lands as usual. Returns how many were dropped.
+   */
+  clearFine() {
+    const gone = new Set();
+    for (const [key, e] of [...this.mem]) {
+      if (e.density <= 1) continue;
+      this.mem.delete(key);
+      this.bytes -= e.held;
+      this.fineBytes -= e.w * e.h * 4;
+      e.bitmap?.close?.();
+      gone.add(key);
+      this.onEvict(e.name, e.density);
+    }
+    for (const [key, w] of [...this.worn]) {
+      if (gone.has(key.slice(0, key.lastIndexOf("|")))) {
+        this.worn.delete(key);
+        this.bytes -= w.bytes;
+      }
+    }
+    this.refused = new Map();
+    return gone.size;
+  }
+
   /** `name` at `d` is on the view (the animation's frames too, drawn or not). */
   touch(name, d = 1) {
     this.touched.add(spriteKey(name, d));

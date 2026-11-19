@@ -15,6 +15,11 @@ export function heldButton(doc, label, onTap) {
   b.append(lamp, text);
   b.addEventListener("click", onTap);
   b.setAttribute("aria-pressed", "false");
+  // A held button on its own (one panel's button) is lit and unlit by `set`; a group sets its members the same way.
+  b.set = (on) => {
+    b.classList.toggle("on", !!on);
+    b.setAttribute("aria-pressed", on ? "true" : "false");
+  };
   return b;
 }
 
@@ -67,11 +72,7 @@ export function heldGroup(doc, parent, labels, onTap) {
   return {
     buttons,
     set(held) {
-      buttons.forEach((b, i) => {
-        const on = i === held;
-        b.classList.toggle("on", on);
-        b.setAttribute("aria-pressed", on ? "true" : "false");
-      });
+      buttons.forEach((b, i) => b.set(i === held));
     },
   };
 }

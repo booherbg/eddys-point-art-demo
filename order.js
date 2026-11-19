@@ -167,6 +167,35 @@ export class Order {
     return !this.slow(family) || this.firstDone || !others;
   }
 
+  /**
+   * Worker `worker` is gone (the Workers panel took it away, Task 28): it holds no family any more, so a family only it held is open to the
+   * rest again (a slow family is built by one worker only, and would otherwise wait for one that no longer exists).
+   */
+  dropWorker(worker) {
+    for (const held of this.holders.values()) held.delete(worker);
+  }
+
+  /**
+   * The names waiting, next first, at most `limit` of them: `{name, density}` in the order `next` would give them to an idle worker
+   * (the same keys against the view as it is now). A slow family's job is left out while the first screen is not done and another
+   * family's waits, as `next` leaves it. Read only when the Workers panel is open.
+   */
+  upcoming(limit = 5) {
+    const others = [...this.queue.values()].some((r) => !this.slow(r.family));
+    const list = [];
+    for (const r of this.queue.values()) {
+      if (this.slow(r.family) && !this.firstDone && others) continue;
+      const entry = { r, key: this.#key(r) };
+      let at = list.length;
+      while (at > 0 && less(entry.key, list[at - 1].key)) at--;
+      if (at < limit) {
+        list.splice(at, 0, entry);
+        if (list.length > limit) list.pop();
+      }
+    }
+    return list.map(({ r }) => ({ name: r.name, density: r.density > 1 ? r.density : 1 }));
+  }
+
   /** The sprite is drawn (`d`: its density, the game's own by default). */
   finish(name, d = 1) {
     this.states.set(spriteKey(name, d), "done");

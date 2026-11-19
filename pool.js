@@ -9,8 +9,17 @@
  */
 export function workerCount({ coarse, width, height, cores }) {
   const spare = Math.max(1, (Number.isFinite(cores) ? cores : 1) - 1);
-  return Math.min(isPhone({ coarse, width, height }) ? 3 : 7, spare);
+  return Math.min(isPhone({ coarse, width, height }) ? PHONE_MAX : LAPTOP_MAX, spare);
 }
+
+/** The most workers `workerCount` gives a laptop and a phone. */
+export const LAPTOP_MAX = 7;
+export const PHONE_MAX = 3;
+/** The Workers panel's range for a count she sets (Task 28): past the core count the workers share cores, and the panel's numbers show it. */
+export const MIN_WORKERS = 1;
+export const MAX_WORKERS = 12;
+/** `workerCount`'s rule as the Workers panel says it (Task 28); built from its two caps, so the sentence and the rule change together. */
+export const WORKER_RULE = `One worker per core, less one for the game, at most ${LAPTOP_MAX} on a laptop and ${PHONE_MAX} on a phone.`;
 
 /** The phone rule (ruling 6): a coarse pointer and a short side under 700 CSS px. The picture cache's cap reads it too (Task 31). */
 export function isPhone({ coarse, width, height }) {
@@ -36,38 +45,118 @@ export class Pool {
   /**
    * `module`: the compiled forge module (posted to each worker once). `count`: workers. `makeWorker(id)`: a worker whose
    * messages follow `pool-worker.js`. `order`: the `Order`. `slow`: ms each job waits first (a test page's way to show a slow machine), `onDrawn(result)`: each sprite as it lands, `{name, family, density,
-   * bitmap, w, h, ax, ay, ms}`, the bitmap made by the worker and transferred.
+   * bitmap, w, h, ax, ay, ms}`, the bitmap made by the worker and transferred. `now()`: seconds on any steady clock (the Workers panel's bars read each job's age from it).
+   *
+   * The count can change while it runs (`resize`, Task 28): a worker is added with no reload, and one taken away finishes the sprite it is
+   * drawing first, so no job is lost or drawn twice. Each worker keeps its id for good (a taken one's id is never reused).
    */
-  constructor({ module, count, makeWorker, order, onDrawn, onError, slow = 0 }) {
+  constructor({ module, count, makeWorker, order, onDrawn, onError, slow = 0, now = () => performance.now() / 1000 }) {
     this.order = order;
     this.slow = slow;
+    this.module = module;
+    this.makeWorker = makeWorker;
+    this.now = now;
     this.onDrawn = onDrawn || (() => {});
     this.onError = onError || (() => {});
-    this.workers = [];
+    /** id -> `{id, w, job, retiring}`: `job` is `{name, family, density, at}` while it draws, `retiring` once it is to go. */
+    this.slots = new Map();
+    this.nextId = 0;
     this.idle = [];
     this.pumping = false;
     this.stats = { drawn: 0, ms: 0, failed: 0 };
-    this.ready = Promise.all(
-      Array.from({ length: count }, (_, id) => {
-        const w = makeWorker(id);
-        this.workers.push(w);
-        return new Promise((res) => {
-          w.onmessage = (e) => {
-            if (e.data.kind === "ready") {
-              w.onmessage = (ev) => this.#message(id, ev.data);
-              this.idle.push(id);
-              res();
-            }
-          };
-          w.postMessage({ kind: "init", id, module });
-        });
-      })
-    ).then(() => this.#schedule());
+    /** family@density -> `{n, ms}`: what each kind of job took, for the Workers panel's bars. */
+    this.means = new Map();
+    /** The current burst of work: `have` sprites landed of the `of` asked since the pool last sat idle (or since `newBurst`). */
+    this.burst = { have: 0, of: 0 };
+    this.ready = Promise.all(Array.from({ length: count }, () => this.#add())).then(() => this.#schedule());
+  }
+
+  /** Starts one worker; the promise is for its first message. */
+  #add() {
+    const id = this.nextId++;
+    const w = this.makeWorker(id);
+    const slot = { id, w, job: null, retiring: false };
+    this.slots.set(id, slot);
+    return new Promise((res) => {
+      slot.res = res;
+      w.onmessage = (e) => {
+        if (e.data.kind === "ready") {
+          w.onmessage = (ev) => this.#message(id, ev.data);
+          this.idle.push(id);
+          this.#schedule();
+          res();
+        }
+      };
+      w.postMessage({ kind: "init", id, module: this.module });
+    });
+  }
+
+  /** The workers that are here to stay (not yet told to go). */
+  get size() {
+    let n = 0;
+    for (const s of this.slots.values()) if (!s.retiring) n++;
+    return n;
+  }
+
+  /**
+   * Makes the count `n`: more are started, fewer are taken away from the highest id down, an idle one first; a busy one is told to go and
+   * is gone when its sprite lands. A family only a taken worker held is open to the rest again (`Order.dropWorker`).
+   */
+  resize(n) {
+    n = Math.max(1, Math.floor(n));
+    while (this.size < n) {
+      const gone = [...this.slots.values()].filter((s) => s.retiring).sort((a, b) => b.id - a.id)[0];
+      if (gone && gone.job) gone.retiring = false; // a worker still finishing its sprite is kept rather than replaced
+      else this.#add();
+    }
+    while (this.size > n) {
+      const keep = [...this.slots.values()].filter((s) => !s.retiring).sort((a, b) => b.id - a.id);
+      const s = keep.find((k) => !k.job) || keep[0];
+      s.retiring = true;
+      if (!s.job) this.#drop(s);
+    }
+    this.#schedule();
+  }
+
+  #drop(slot) {
+    this.slots.delete(slot.id);
+    const at = this.idle.indexOf(slot.id);
+    if (at >= 0) this.idle.splice(at, 1);
+    this.order.dropWorker(slot.id);
+    slot.w.terminate();
+    if (slot.res) slot.res(); // a worker taken away before it was ready no longer holds `ready` back
   }
 
   /** Workers with a job in flight. */
   get working() {
-    return this.workers.length - this.idle.length;
+    let n = 0;
+    for (const s of this.slots.values()) if (s.job) n++;
+    return n;
+  }
+
+  /**
+   * What the Workers panel shows of each worker still here, in id order: `{n, job}` with `n` its place (1 up) and `job` null when idle, else
+   * `{name, family, density, elapsed, mean}` (seconds in flight, and ms the kind of job takes, `meanMs`). Read only when the panel is open.
+   */
+  view() {
+    const t = this.now();
+    const out = [];
+    for (const s of [...this.slots.values()].filter((x) => !x.retiring).sort((a, b) => a.id - b.id)) {
+      out.push({ n: out.length + 1, job: s.job && { name: s.job.name, family: s.job.family, density: s.job.density, elapsed: t - s.job.at, mean: this.meanMs(s.job.family, s.job.density) } });
+    }
+    return out;
+  }
+
+  /** How long a job of `family` at `density` takes, in ms: that kind's mean, else the whole pool's, else 0 before any sprite has landed. */
+  meanMs(family, density = 1) {
+    const m = this.means.get(`${family}@${density > 1 ? density : 1}`);
+    if (m && m.n) return m.ms / m.n;
+    return this.stats.drawn ? this.stats.ms / this.stats.drawn : 0;
+  }
+
+  /** The panel's "Drawn" counts start again from now: what still waits or draws is the whole of the burst. */
+  newBurst() {
+    this.burst = { have: 0, of: this.order.waiting() + this.working };
   }
 
   /** True when nothing waits, nothing is drawing and no name has failed (a failed name keeps its sketch, so the page is not all set). */
@@ -81,7 +170,13 @@ export class Pool {
 
   /** Ask for a sprite (see `Order.request`). Jobs go out together at the end of the tick, so a frame's whole ask is sorted first. */
   request(r) {
+    const quiet = this.order.waiting() === 0 && this.working === 0;
+    const before = this.order.waiting();
     this.order.request(r);
+    if (this.order.waiting() > before) {
+      if (quiet) this.burst = { have: 0, of: 0 };
+      this.burst.of++;
+    }
     this.#schedule();
   }
 
@@ -101,12 +196,16 @@ export class Pool {
         const job = this.order.next(id, mode);
         if (!job) continue;
         this.idle.splice(this.idle.indexOf(id), 1);
-        this.workers[id].postMessage({ kind: "draw", id, name: job.name, family: job.family, density: job.density > 1 ? job.density : 1, slow: this.slow });
+        const density = job.density > 1 ? job.density : 1;
+        const slot = this.slots.get(id);
+        slot.job = { name: job.name, family: job.family, density, at: this.now() };
+        slot.w.postMessage({ kind: "draw", id, name: job.name, family: job.family, density, slow: this.slow });
       }
     }
   }
 
   #message(id, m) {
+    const slot = this.slots.get(id);
     // A worker that built a family's models says how long it took; a failed first job counts as built, so no family stays unmeasured.
     if (m.prep !== undefined) this.order.prepared(m.family, m.prep);
     else if (m.kind === "failed") this.order.prepared(m.family, 0);
@@ -114,17 +213,30 @@ export class Pool {
       this.order.finish(m.name, m.density);
       this.stats.drawn++;
       this.stats.ms += m.ms || 0;
+      const key = `${m.family}@${m.density > 1 ? m.density : 1}`;
+      const mean = this.means.get(key) || { n: 0, ms: 0 };
+      mean.n++;
+      mean.ms += m.ms || 0;
+      this.means.set(key, mean);
+      this.burst.have++;
       this.onDrawn(m);
     } else if (m.kind === "failed") {
       this.order.fail(m.name, m.density);
       this.stats.failed++;
+      this.burst.have++;
       this.onError(m);
+    }
+    if (!slot) return;
+    slot.job = null;
+    if (slot.retiring) {
+      this.#drop(slot);
+      return;
     }
     this.idle.push(id);
     this.#schedule();
   }
 
   close() {
-    this.workers.forEach((w) => w.terminate());
+    for (const s of this.slots.values()) s.w.terminate();
   }
 }

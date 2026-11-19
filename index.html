@@ -38,10 +38,21 @@
   #panel .btn { flex: 0 0 auto; min-width: 44px; min-height: 32px; flex-direction: row; gap: 5px; padding: 4px 8px; }
   #panel .actions { gap: 6px; flex-wrap: wrap; }
   #panel .stat { white-space: nowrap; }
-  .card { position: fixed; z-index: 4; box-sizing: border-box; min-width: 150px; max-width: min(240px, calc(100vw - 16px)); padding: 8px 10px; display: flex; flex-direction: column; gap: 4px;
-          background: #2a1c3e; color: #f4efe6; border: 2px solid #14101c; border-radius: 4px; font: 600 13px/1.2 ui-monospace, Menlo, monospace; pointer-events: none; }
-  .cardtitle { font-size: 14px; padding-bottom: 4px; border-bottom: 1px solid #5a4a78; }
-  .cardrow { white-space: nowrap; }
+  .wpanel { position: fixed; z-index: 6; left: 8px; top: 52px; box-sizing: border-box; width: 292px; max-width: calc(100vw - 16px); max-height: calc(100vh - 130px); overflow-y: auto;
+            padding: 8px; display: flex; flex-direction: column; gap: 5px; background: #2a1c3e; color: #f4efe6; border: 2px solid #14101c; border-radius: 4px;
+            font: 600 13px/1.15 ui-monospace, Menlo, monospace; }
+  .wpanel .row { display: flex; align-items: center; gap: 6px; }
+  .wpanel .actions { flex-wrap: wrap; }
+  .wpanel .btn { flex: 0 0 auto; min-width: 44px; min-height: 32px; flex-direction: row; gap: 5px; padding: 4px 8px; }
+  .wpanel .stat, .wpanel .wnext { white-space: nowrap; }
+  .wpanel .wnext { color: #cdbfe6; padding-left: 12px; }
+  .wpanel .wrule { color: #cdbfe6; font-weight: 400; line-height: 1.3; }
+  .wlist { display: flex; flex-direction: column; gap: 3px; }
+  .wrow { display: flex; align-items: center; gap: 8px; }
+  .wname { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .wrow .wbar { flex: 0 0 64px; }
+  .wbar { height: 5px; background: #14101c; border-radius: 2px; overflow: hidden; }
+  .wfill { height: 100%; width: 0; background: #5fd068; }
   #tip { position: fixed; z-index: 5; left: 50%; transform: translateX(-50%); bottom: 82px; max-width: calc(100vw - 32px); box-sizing: border-box; padding: 6px 12px;
          background: #f4efe6; color: #2a1c3e; border: 2px solid #2a1c3e; border-radius: 4px; font: 600 14px/1.3 ui-monospace, Menlo, monospace;
          text-align: center; pointer-events: none; }
