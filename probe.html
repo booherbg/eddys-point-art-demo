@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Live forge probe</title>
+<style>
+  :root { color-scheme: dark; --bg: #14121c; --fg: #f4efe6; --dim: #9aa7c7; --ok: #4cbd74; --bad: #ff3d6e; --rule: #3a3346; }
+  body { margin: 0; padding: 16px 24px; background: var(--bg); color: var(--fg); font: 15px/1.45 ui-monospace, Menlo, monospace; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .dim { color: var(--dim); }
+  table { border-collapse: collapse; margin: 12px 0; }
+  th, td { text-align: right; padding: 3px 12px; border-bottom: 1px solid var(--rule); }
+  th:first-child, td:first-child { text-align: left; }
+  .ok { color: var(--ok); } .bad { color: var(--bad); }
+  #summary { font-size: 17px; margin: 8px 0; }
+</style>
+</head>
+<body>
+<h1>Live forge probe</h1>
+<div class="dim" id="env"></div>
+<div id="summary">Running</div>
+<table id="table"></table>
+<script type="module" src="probe.js"></script>
+</body>
+</html>
