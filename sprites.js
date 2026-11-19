@@ -9,6 +9,9 @@
 import { paint, WORN_CAP } from "./recolor.js";
 import { spriteKey, MAX_STEP } from "./detail.js";
 
+const STYLES = ["classic", "soft", "toybox"];
+const cacheKey = (style, name, density = 1) => spriteKey(`${style}\0${name}`, density);
+
 export const INK = "#2A1C3E";
 /** The pale sheet the box is drawn on (the palette's paper tone), so the pencil shows on any ground. */
 export const PAPER = "#F4EFE6";
@@ -47,8 +50,10 @@ export class Sprites {
    * `ask(req)`: how a sprite is requested (the pool's `request`). `boxes`: name -> `[w, h, ax, ay]`, the size the sketch
    * is drawn from before the picture exists.
    */
-  constructor({ ask, boxes = {}, rowOf = null, makeWorn = null, cap = Infinity, onEvict = () => {} }) {
+  constructor({ ask, boxes = {}, style = "classic", rowOf = null, makeWorn = null, cap = Infinity, onEvict = () => {} }) {
     this.ask = ask;
+    this.style = style;
+    this.previousStyle = null;
     /**
      * The byte budget (live forge Task 31, b582): `bytes` is everything held, the bitmaps, a person's pixels and mask, and her worn
      * canvases. Past `cap`, `endFrame` evicts what is not on screen: worn canvases first (the cheapest to make again), then fine
@@ -59,7 +64,7 @@ export class Sprites {
      */
     this.cap = cap;
     this.onEvict = onEvict;
-    /** The bytes of the fine pictures (density above 1) in memory (their bitmaps). A picture is in `mem` under `spriteKey(name, density)`. */
+    /** The bytes of the fine pictures (density above 1) in memory (their bitmaps), keyed by style, name, and density. */
     this.fineBytes = 0;
     /** The frame number, and for each key the frame it was last on screen. */
     this.frameNo = 0;
@@ -87,25 +92,32 @@ export class Sprites {
     this.sketched = new Set();
   }
 
+  /** Select a whole forge style while keeping every style's pictures in its own cache. */
+  setStyle(style) {
+    if (style === this.style) return;
+    this.previousStyle = this.style;
+    this.style = style;
+  }
+
   /** Whether the picture is in memory, at any step. */
-  has(name) {
-    return this.#best(name, MAX_STEP) !== null;
+  has(name, style = this.style) {
+    return this.#best(name, MAX_STEP, style) !== null;
   }
 
   /** Whether the picture is in memory at exactly density `d`. */
-  hasAt(name, d = 1) {
-    return this.mem.has(spriteKey(name, d));
+  hasAt(name, d = 1, style = this.style) {
+    return this.mem.has(cacheKey(style, name, d));
   }
 
   /** The density of the picture `draw` would use for `name` at `d` (the finest in memory at or below it), 0 when none is in memory. */
-  densityOf(name, d = 1) {
-    return this.#best(name, d)?.density || 0;
+  densityOf(name, d = 1, style = this.style) {
+    return this.#best(name, d, style)?.density || 0;
   }
 
   /** The finest picture of `name` in memory at or below density `d`: the enlarged lower step stands in for a finer one not drawn yet. */
-  #best(name, d) {
+  #best(name, d, style = this.style) {
     for (let k = Math.max(1, d); k >= 1; k--) {
-      const e = this.mem.get(spriteKey(name, k));
+      const e = this.mem.get(cacheKey(style, name, k));
       if (e) return e;
     }
     return null;
@@ -116,9 +128,9 @@ export class Sprites {
    * what is held and what is already on its way. A picture asked for once stays asked (true again until it lands); one the cap holds
    * back is noted for `blockedCount` and asked again on a later frame, when the frame's trim has freed room.
    */
-  wantsFine(name, d) {
-    if (d <= 1 || this.hasAt(name, d)) return false;
-    const key = spriteKey(name, d);
+  wantsFine(name, d, style = this.style) {
+    if (d <= 1 || this.hasAt(name, d, style)) return false;
+    const key = cacheKey(style, name, d);
     if (this.claimed.has(key)) return true;
     const box = this.boxes[name];
     const est = box ? (box[0] + 2) * (box[1] + 2) * d * d * 4 : 0;
@@ -135,8 +147,8 @@ export class Sprites {
    * The game's size of `name` is asked for: its bytes are reserved like a fine picture's, so the cap counts it before it lands (it is
    * never refused and never evicted). Say it again each frame it is still missing: it is one reserve.
    */
-  claimOne(name) {
-    const key = spriteKey(name, 1);
+  claimOne(name, style = this.style) {
+    const key = cacheKey(style, name, 1);
     if (this.claimed.has(key)) return;
     const box = this.boxes[name];
     const est = box ? (box[0] + 2) * (box[1] + 2) * 9 : 0;
@@ -203,7 +215,7 @@ export class Sprites {
       this.fineBytes -= e.w * e.h * 4;
       e.bitmap?.close?.();
       gone.add(e.key);
-      this.onEvict(e.name, e.density);
+      this.onEvict(e.name, e.density, e.style);
     }
     if (gone.size) {
       // Her worn pictures made from an evicted one go with it.
@@ -238,13 +250,13 @@ export class Sprites {
   }
 
   /** `name` at `d` is on the view (the animation's frames too, drawn or not). */
-  touch(name, d = 1) {
-    this.touched.add(spriteKey(name, d));
+  touch(name, d = 1, style = this.style) {
+    this.touched.add(cacheKey(style, name, d));
   }
 
   /** A draw that failed (the pool's `onError`): that picture is never waited for. */
-  failed({ name, density = 1 }) {
-    const key = spriteKey(name, density);
+  failed({ name, density = 1, style = this.style }) {
+    const key = cacheKey(style, name, density);
     this.failedKeys.add(key);
     this.#unclaim(key);
   }
@@ -281,14 +293,15 @@ export class Sprites {
 
   /** The pool's `onDrawn`: keep the bitmap, and note when it landed. */
   landed(res, now) {
+    const style = res.style || this.style;
     const density = res.density > 1 ? res.density : 1;
-    const key = spriteKey(res.name, density);
+    const key = cacheKey(style, res.name, density);
     this.#unclaim(key);
     if (density > 1 && !this.mem.has(key)) this.fineBytes += res.w * res.h * 4;
     const old = this.mem.get(key);
     const held = res.w * res.h * 4 + (res.rgba ? res.rgba.byteLength : 0) + (res.codes ? res.codes.byteLength : 0);
     this.bytes += held - (old ? old.held : 0);
-    this.mem.set(key, { key, name: res.name, density, bitmap: res.bitmap, w: res.w, h: res.h, ax: res.ax, ay: res.ay, at: now, fill: this.sketched.has(key), rgba: res.rgba, codes: res.codes, ms: res.ms || 0, held, used: this.frameNo });
+    this.mem.set(key, { key, name: res.name, style, density, bitmap: res.bitmap, w: res.w, h: res.h, ax: res.ax, ay: res.ay, at: now, fill: this.sketched.has(key), rgba: res.rgba, codes: res.codes, ms: res.ms || 0, held, used: this.frameNo });
   }
 
   /** What to draw for sprite `e` worn by `wear` (-1 or undefined: the forge's own look): the picture in her look, made once. */
@@ -324,22 +337,28 @@ export class Sprites {
    * view column: it is drawn in slices, each in its place among the things round it), or null for all of it.
    */
   draw(ctx, req, sx, sy, now, clip = null) {
+    const style = req.style || this.style;
     const d = req.density > 1 ? req.density : 1;
-    this.touched.add(spriteKey(req.name, d));
-    const e = this.#best(req.name, d);
+    const key = cacheKey(style, req.name, d);
+    this.touched.add(key);
+    const e = this.#best(req.name, d, style);
     if (e) this.shown.add(e.key);
     if (!e) {
       // Nothing drawn at any step: the game's size first (it stands in for every finer one), then the fine one.
-      this.ask({ ...req, density: 1 });
-      if (this.wantsFine(req.name, d)) this.ask({ ...req, density: d });
-      this.sketched.add(req.name);
-      this.#sketch(ctx, req, sx, sy, now, clip);
+      this.ask({ ...req, style, density: 1 });
+      if (this.wantsFine(req.name, d, style)) this.ask({ ...req, style, density: d });
+      this.sketched.add(key);
+      const old = this.#fallback(req.name, style, d);
+      if (old) this.#blit(ctx, old, this.#picture(old, req.wear), sx, sy, old.h, clip);
+      else this.#sketch(ctx, req, sx, sy, now, clip);
       return false;
     }
-    if (e.density < d && this.wantsFine(req.name, d)) this.ask({ ...req, density: d });
+    if (e.density < d && this.wantsFine(req.name, d, style)) this.ask({ ...req, style, density: d });
     const t = now - e.at;
     if (e.fill && t < FILL_SECONDS) {
       const rows = fillRows(t, e.h);
+      const old = this.#fallback(req.name, style, d);
+      if (old) this.#blit(ctx, old, this.#picture(old, req.wear), sx, sy, old.h, clip);
       this.#sketch(ctx, req, sx, sy, now, clip);
       if (rows > 0) this.#blit(ctx, e, this.#picture(e, req.wear), sx, sy, rows, clip);
       return false;
@@ -353,16 +372,28 @@ export class Sprites {
    * for (the bar's items are prefetched, so this is rare) and nothing shows meanwhile; a ghost is never sketched.
    */
   ghost(ctx, req, sx, sy, alpha = 0.6) {
-    const e = this.mem.get(req.name);
+    const style = req.style || this.style;
+    const e = this.#best(req.name, req.density || 1, style) || this.#fallback(req.name, style, req.density || 1);
     if (!e) {
-      this.ask({ ...req, density: 1 });
+      this.ask({ ...req, style, density: 1 });
       return false;
     }
     ctx.save();
     ctx.globalAlpha = alpha;
-    ctx.drawImage(e.bitmap, sx - e.ax, sy - e.ay);
+    const k = e.density;
+    ctx.drawImage(this.#picture(e, req.wear), sx - e.ax / k, sy - e.ay / k, e.w / k, e.h / k);
     ctx.restore();
     return true;
+  }
+
+  /** A cached picture in another style holds the place until this style's draw lands. */
+  #fallback(name, style, d) {
+    for (const candidate of [this.previousStyle, ...STYLES]) {
+      if (!candidate || candidate === style) continue;
+      const e = this.#best(name, d, candidate);
+      if (e) return e;
+    }
+    return null;
   }
 
   /**

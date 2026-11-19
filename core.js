@@ -15,10 +15,19 @@ export function fnv1a(bytes) {
   return h >>> 0;
 }
 
+/**
+ * The key of the group of a family's models a sprite lives in: the family, and for a portrait (`portrait_{kind}_{rest|move}`) its kind
+ * too, since a portrait is built alone (the forge's `Group`). The page's order and the worker use the same key.
+ */
+export function groupKey(family, name) {
+  const m = /^portrait_(.+)_(rest|move)$/.exec(name);
+  return m ? `${family}/${m[1]}` : family;
+}
+
 export const hex8 = (n) => n.toString(16).padStart(8, "0");
 
 /** Instantiate `module` (a compiled `WebAssembly.Module`, or its bytes) and wrap its exports. */
-export async function instantiate(moduleOrBytes) {
+export async function instantiate(moduleOrBytes, style = "classic") {
   const module = moduleOrBytes instanceof WebAssembly.Module ? moduleOrBytes : await WebAssembly.compile(moduleOrBytes);
   const instance = await WebAssembly.instantiate(module, {});
   const x = instance.exports;
@@ -29,8 +38,14 @@ export async function instantiate(moduleOrBytes) {
     mem().set(b, p);
     return [p, b.length];
   };
+  const [stylePtr, styleLen] = put(style);
+  const styleSet = x.lf_set_style(stylePtr, styleLen);
+  x.lf_free(stylePtr, styleLen);
+  if (styleSet !== 1) throw new Error(`unknown drawing style: ${style}`);
   const take = (p) => (p === 0 ? null : mem().slice(p, p + x.lf_len()));
   const prepared = new Map();
+  /** group key -> true: the groups this instance has built (a family's own models, or one kind's portraits; `groupKey`). */
+  const groups = new Set();
   let lastCodes = null;
   return {
     /** Every family's name. */
@@ -47,14 +62,29 @@ export async function instantiate(moduleOrBytes) {
       prepared.set(family, new Map(names.map((nm, i) => [nm, i])));
       return names;
     },
-    /** Draw sprite `name` of `family` (prepared first if it is not) at `density` times the pixels (1 is the bake's): its one-sprite FRG1 bytes, or null. */
-    draw(family, name, density = 1) {
-      if (!prepared.has(family) && this.prepare(family) === null) return null;
-      const i = prepared.get(family).get(name);
-      if (i === undefined) return null;
+    /**
+     * Build only the group of `family`'s models that sprite `name` lives in (its own models, or one kind's portraits: Task 1b), the
+     * fixed cost of drawing it. How many sprites the group holds; 0 for no such family.
+     */
+    build(family, name) {
       const [p, n] = put(family);
-      const out = take(x.lf_draw(p, n, i, density));
+      const [q, m] = put(name);
+      const count = x.lf_build(p, n, q, m);
       x.lf_free(p, n);
+      x.lf_free(q, m);
+      if (count > 0) groups.add(groupKey(family, name));
+      return count;
+    },
+    /** Whether the group sprite `name` of `family` lives in is built here. */
+    hasGroup: (family, name) => groups.has(groupKey(family, name)),
+    /** Draw sprite `name` of `family` at `density` times the pixels (1 is the bake's): its one-sprite FRG1 bytes, or null. Builds only its own group, never the whole family. */
+    draw(family, name, density = 1) {
+      const [p, n] = put(family);
+      const [q, m] = put(name);
+      const out = take(x.lf_draw_named(p, n, q, m, density));
+      x.lf_free(p, n);
+      x.lf_free(q, m);
+      if (out) groups.add(groupKey(family, name));
       // A person's mask (the remap code of each pixel), kept for `codes`; the next draw replaces it.
       lastCodes = out ? take(x.lf_codes()) : null;
       return out;

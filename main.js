@@ -11,7 +11,7 @@ import { canvasMaker } from "./recolor.js";
 import { fpsRow, prepRows, wasmMemoryRow, jsHeapRow, jsHeapBytes, spriteCacheRow, spritesDrawnRow, spritesCachedRow, onScreenRow, drawingRow, DrawClock } from "./stats.js";
 import { openPark } from "./park.js";
 import { Scene, Camera, wheelStep, parseTable, makeAtlas, GroundAtlases, RECORD } from "./scene.js";
-import { SPEEDS, OPENING, tileAt, diamond, Hands, Prefetch } from "./play.js";
+import { STYLES, SPEEDS, OPENING, tileAt, diamond, Hands, Prefetch } from "./play.js";
 import { heldGroup, heldButton } from "./bar.js";
 import { TOOLS, START, tapTray, tapTool, tapRemove, labelOfTool, isRide, makeBuildBar } from "./trays.js";
 import { makePanel } from "./panel.js";
@@ -45,12 +45,10 @@ const table = parseTable(api.table());
 // The ground, drawn in code: each density is the same recipe at finer pixels, built on a turn of its own when first needed.
 const atlas = new GroundAtlases({ build: (d) => makeAtlas(api.atlas(d), (w, h) => Object.assign(document.createElement("canvas"), { width: w, height: h }), d) });
 
-// A past run's build times (`prep.json`) tell the order which families are slow before the first build; a worker's own measure replaces each.
-const prepHints = await fetch("prep.json").then((r) => (r.ok ? r.json() : {}), () => ({}));
-const order = new Order({ boxes: table.boxes, prep: prepHints });
+const order = new Order({ boxes: table.boxes });
 // The picture cache's byte budget (Task 31, b582): 64 MB on a phone (pool.js's phone rule), 256 MB on a laptop, `?cache=<MB>` for another.
 const cap = cacheCap({ phone: detectPhone(), param: q.get("cache") });
-const sprites = new Sprites({ ask: (r) => pool.request(r), boxes: table.boxes, cap, onEvict: (name, d) => order.forget(name, d), rowOf: (id) => api.wearRow(id), makeWorn: canvasMaker(document) });
+const sprites = new Sprites({ ask: (r) => pool.request(r), boxes: table.boxes, cap, onEvict: (name, d, style) => order.forget(name, d, style), rowOf: (id) => api.wearRow(id), makeWorn: canvasMaker(document) });
 const pool = new Pool({
   module: forgeModule,
   count: workers,
@@ -60,7 +58,7 @@ const pool = new Pool({
   onDrawn: (r) => (sprites.landed(r, nowS()), clock.landed(nowS())),
   onError: (r) => (sprites.failed(r), console.log(`lf-failed ${r.name}: ${r.error || "no picture"}`)),
 });
-const scene = new Scene({ api, table, sprites, ask: (r) => pool.request(r), atlas, slow: (family) => order.slow(family) });
+const scene = new Scene({ api, table, sprites, ask: (r) => pool.request(r), atlas });
 
 // The camera's center in art pixels, over the carousel and the gate to start; moved only by her.
 const camera = new Camera({ x: -200, y: 450 }, api.size, Number(q.get("zoom")) || 1);
@@ -162,6 +160,14 @@ const speedBar = heldGroup(document, document.getElementById("speeds"), SPEEDS.m
   speed = SPEEDS[i][1];
   speedBar.set(i);
 });
+const styleBar = heldGroup(document, document.getElementById("styles"), STYLES, (i) => {
+  const style = STYLES[i].toLowerCase();
+  sprites.setStyle(style);
+  pool.setStyle(style);
+  if (window.__lf) window.__lf.style = style;
+  styleBar.set(i);
+});
+styleBar.set(0);
 speedBar.set(1);
 let wheelAt = -Infinity;
 canvas.addEventListener("wheel", (e) => {
@@ -218,7 +224,8 @@ sync();
 
 // ---- the dev overlay's numbers: E3 (times) and E5 (frame time while drawing) ----
 const frames = { all: [], drawing: [], idle: [] };
-const lf = (window.__lf = { workers, readyMs: null, firstScreenMs: null, allSetMs: null, firstNames: 0, drawn: 0, missing: "" });
+const lf = (window.__lf = { workers, style: "classic", readyMs: null, firstScreenMs: null, allSetMs: null, firstNames: 0, drawn: 0, missing: "", busyMax: 0 });
+lf.styleSettled = () => pool.settled();
 // Read-only helpers for the scripted run (never a way to build): where a tile is on the screen, whether the sim would take a
 // tool there (`Park::test`), and what the ground there is. A run's taps go through the page's own buttons and pointer events.
 lf.screenOf = (tx, ty) => {
@@ -253,8 +260,8 @@ lf.items = (prefix) => {
   return out;
 };
 lf.detail = () => detail;
-// Read-only, for the first screen's time (Task 32): how many of its names each family holds, and whether the family is slow (so it waits).
-lf.firstFamilies = () => { const n = {}; for (const name of scene.first ?? []) { const f = table.entries.find((e) => e.name === name)?.family; n[f] = (n[f] || 0) + 1; } return Object.entries(n).map(([f, c]) => `${f}: ${c}${order.slow(f) ? " (slow)" : ""}`).join(", "); };
+// Read-only, for the first screen's time (Task 32): how many of its names each family holds.
+lf.firstFamilies = () => { const n = {}; for (const name of scene.first ?? []) { const f = table.entries.find((e) => e.name === name)?.family; n[f] = (n[f] || 0) + 1; } return Object.entries(n).map(([f, c]) => `${f}: ${c}`).join(", "); };
 // Read-only: the Workers panel's words, whole, in order (null while it is shut).
 lf.workersPanel = () => (workersPanel.isOpen ? workersPanel.words() : null);
 // Read-only: the sprites the last frame drew, and how many of them at a step under the Detail row's (stand-ins and sketches).
@@ -396,10 +403,10 @@ function loop() {
     (busy ? frames.drawing : frames.idle).push(dt);
     for (const a of Object.values(frames)) if (a.length > 600) a.shift();
   }
+  if (lf.firstScreenMs === null) lf.busyMax = Math.max(lf.busyMax, pool.working); // the most workers busy at once while the first screen draws
   if (lf.firstScreenMs === null && scene.firstDoneAt !== null) {
     lf.firstScreenMs = Math.round(scene.firstDoneAt * 1000);
     lf.firstNames = scene.first.length;
-    order.setFirstDone(); // the slow families (the animals') are drawn from here
     console.log(`lf-first-screen ${lf.firstScreenMs} ms, ${lf.firstNames} names, ${pool.stats.drawn} drawn on ${workers} workers`);
   }
   if (lf.allSetMs === null && lf.firstScreenMs !== null && pool.settled()) {

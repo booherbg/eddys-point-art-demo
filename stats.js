@@ -8,7 +8,7 @@ export function fpsRow(frameMs) {
   return `FPS: ${mean > 0 ? Math.round(1000 / mean) : 0}`;
 }
 
-/** The overlay's build-time rows, the slow families first: `Build animals: 27.4 s`, one a family a worker has built (ms from `Order.prep`). */
+/** The overlay's build-time rows, the slow families first: `Build animals: 27.4 s`, one a group a worker has built, a family or a family's one portrait kind (ms from `Order.prep`). */
 export function prepRows(prep) {
   const fmt = (ms) => (ms >= 1000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.round(ms)} ms`);
   return [...prep].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).filter(([, ms]) => ms >= 1).map(([family, ms]) => `Build ${family}: ${fmt(ms)}`);

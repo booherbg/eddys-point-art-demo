@@ -14,9 +14,9 @@ self.onmessage = async (e) => {
     const rows = [];
     for (const [family, name] of m.jobs) {
       let prepare_ms = 0;
-      if (!forge.has(family)) {
+      if (!forge.hasGroup(family, name)) {
         const t0 = performance.now();
-        forge.prepare(family);
+        forge.build(family, name);
         prepare_ms = performance.now() - t0;
       }
       const t1 = performance.now();

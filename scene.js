@@ -122,10 +122,8 @@ export class Scene {
    * `api`: the park (`park.js`'s shape: `size`, `drawList(view)`, `ground(x0, y0, w, h)`). `table`: `parseTable`'s result.
    * `sprites`: the page's `Sprites`. `ask(req)`: asks the pool for a sprite. `atlas.draw(ctx, index, x, y)`: one ground tile.
    */
-  constructor({ api, table, sprites, ask, atlas, slow = () => false }) {
-    Object.assign(this, { api, table, sprites, ask, atlas, slow });
-    /** name -> family, for `slow`: a name of a slow family (the animals', Task 13) does not hold the first screen back. */
-    this.familyOf = new Map(table.entries.map((e) => [e.name, e.family]));
+  constructor({ api, table, sprites, ask, atlas }) {
+    Object.assign(this, { api, table, sprites, ask, atlas });
     this.stats = { tiles: 0, items: 0, asked: 0, below: 0, belowNames: [] };
     /** The names the first frame showed (the carousel's frame then showing, not all 32), and when each was all in memory. */
     this.first = null;
@@ -236,9 +234,9 @@ export class Scene {
     if (this.firstDoneAt === null && this.#needed().every((n) => this.sprites.has(n) || this.#frameDrawn(n))) this.firstDoneAt = now;
   }
 
-  /** The first screen's names that hold it back: all but those of a slow family, whose models one worker builds after the rest. */
+  /** The first screen's names that hold it back: all of them (no family is built whole now, Task 1b, so none is left out as slow). */
   #needed() {
-    return this.first.filter((n) => !this.slow(this.familyOf.get(n)));
+    return this.first;
   }
 
   /** A frame of an animation counts as drawn when any earlier frame of it is, as it is shown. */

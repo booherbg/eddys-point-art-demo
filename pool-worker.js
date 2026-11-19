@@ -3,17 +3,29 @@
 import { instantiate } from "./core.js";
 import { runJob } from "./draw-job.js";
 
+let module = null;
 let forge = null;
+let style = null;
 const makeBitmap = (rgba, w, h) => createImageBitmap(new ImageData(rgba, w, h));
+
+async function selectStyle(next) {
+  if (!forge || style !== next) {
+    forge = await instantiate(module, next);
+    style = next;
+  }
+  return forge;
+}
 
 self.onmessage = async (e) => {
   const m = e.data;
   if (m.kind === "init") {
-    forge = await instantiate(m.module);
+    module = m.module;
+    await selectStyle("classic");
     self.postMessage({ kind: "ready", id: m.id });
   } else if (m.kind === "draw") {
     if (m.slow) await new Promise((r) => setTimeout(r, m.slow));
-    const { msg, transfer } = await runJob(forge, m, makeBitmap);
+    const selected = await selectStyle(m.style || "classic");
+    const { msg, transfer } = await runJob(selected, m, makeBitmap);
     self.postMessage({ ...msg, id: m.id }, transfer);
   }
 };

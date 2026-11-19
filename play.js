@@ -5,6 +5,9 @@
 
 // The build bar, its trays and Turn are in trays.js (Task 26).
 
+/** Whole forge looks the player can hold for the park. */
+export const STYLES = ["Classic", "Soft", "Toybox"];
+
 /** The button that acts once: ten guests walk up the road. */
 export const ADD_TEN = "Add 10 guests";
 /** The speeds (held, one of three) and the sim steps each runs per 60th of a second. Fast is the game's 4x. */

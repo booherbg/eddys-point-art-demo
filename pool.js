@@ -1,6 +1,7 @@
 // The worker pool (Study 115, plan 2026-11-18-live-forge, Task 2, rulings 2, 3 and 6): N drawing workers, each given the
 // one compiled module, dealt jobs by the order. No DOM at load, so node imports it for its tests; the page passes the
 // real `Worker` factory.
+import { groupKey } from "./core.js";
 
 /**
  * How many workers (ruling 6). A phone (a coarse pointer and a short side under 700 CSS px) gets three at most; any
@@ -52,6 +53,7 @@ export class Pool {
    */
   constructor({ module, count, makeWorker, order, onDrawn, onError, slow = 0, now = () => performance.now() / 1000 }) {
     this.order = order;
+    this.style = "classic";
     this.slow = slow;
     this.module = module;
     this.makeWorker = makeWorker;
@@ -168,11 +170,18 @@ export class Pool {
     this.order.setView(view);
   }
 
+  /** Select the look sent with new drawing work and drop queued work for older looks. */
+  setStyle(style) {
+    this.style = style;
+    const dropped = this.order.keepStyle(style);
+    this.burst.of = Math.max(this.burst.have, this.burst.of - dropped);
+  }
+
   /** Ask for a sprite (see `Order.request`). Jobs go out together at the end of the tick, so a frame's whole ask is sorted first. */
   request(r) {
     const quiet = this.order.waiting() === 0 && this.working === 0;
     const before = this.order.waiting();
-    this.order.request(r);
+    this.order.request({ ...r, style: r.style || this.style });
     if (this.order.waiting() > before) {
       if (quiet) this.burst = { have: 0, of: 0 };
       this.burst.of++;
@@ -198,19 +207,25 @@ export class Pool {
         this.idle.splice(this.idle.indexOf(id), 1);
         const density = job.density > 1 ? job.density : 1;
         const slot = this.slots.get(id);
-        slot.job = { name: job.name, family: job.family, density, at: this.now() };
-        slot.w.postMessage({ kind: "draw", id, name: job.name, family: job.family, density, slow: this.slow });
+        const style = job.style || "classic";
+        slot.job = { name: job.name, family: job.family, density, style, at: this.now() };
+        slot.w.postMessage({ kind: "draw", id, name: job.name, family: job.family, style, density, slow: this.slow });
       }
     }
   }
 
   #message(id, m) {
     const slot = this.slots.get(id);
-    // A worker that built a family's models says how long it took; a failed first job counts as built, so no family stays unmeasured.
-    if (m.prep !== undefined) this.order.prepared(m.family, m.prep);
-    else if (m.kind === "failed") this.order.prepared(m.family, 0);
+    // A worker that built a group's models says how long it took, and holds them from then on; a failed build frees the group's
+    // other sprites (and counts as measured, so none waits on it for good).
+    // A reply in a style since left says nothing about the workers' models: the switch already forgot them (Task 7).
+    const group = groupKey(m.family, m.name);
+    if ((m.style || "classic") === this.style) {
+      if (m.prep !== undefined) this.order.built(group, m.prep, id);
+      else if (m.kind === "failed") this.order.buildFailed(group, id);
+    }
     if (m.kind === "drew") {
-      this.order.finish(m.name, m.density);
+      this.order.finish(m.name, m.style || "classic", m.density);
       this.stats.drawn++;
       this.stats.ms += m.ms || 0;
       const key = `${m.family}@${m.density > 1 ? m.density : 1}`;
@@ -221,7 +236,7 @@ export class Pool {
       this.burst.have++;
       this.onDrawn(m);
     } else if (m.kind === "failed") {
-      this.order.fail(m.name, m.density);
+      this.order.fail(m.name, m.style || "classic", m.density);
       this.stats.failed++;
       this.burst.have++;
       this.onError(m);

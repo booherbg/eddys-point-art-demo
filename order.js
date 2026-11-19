@@ -12,18 +12,19 @@
 // within its bucket, so the enlarged lower step is there to stand in before any fine picture is drawn.
 // Keys are worked out at `next`, against the view as it is then, so a pan re-sorts the queue with no extra step.
 //
-// Workers: a family's models take time to build (the fixed cost), so a family's jobs go first to a worker that holds
-// its models. A worker takes the best of its own families' jobs; else the best of a family nobody holds yet; else it
-// steals the best of any (and holds that family too from then on).
+// Workers: a sprite is drawn from its group's models (`groupKey`: a family's own models, or one portrait kind's pair; the forge builds
+// only that group, Task 1b), and building it takes time (the fixed cost), so a group's jobs go first to a worker that holds its models.
+// A worker takes the best of its own groups' jobs; else the best of a group nobody holds yet; else it steals the best of any (and
+// holds that group too once its build lands, `built`).
 //
-// Slow families (Task 13, ruling 10): a family whose models take over `SLOW_MS` to build (the animals', 27 s in the wasm)
-// is built by one worker only, since every worker that held it would pay the whole cost and its memory again, and it is
-// drawn after the rest: a slow family's job is offered only when the first screen is done (`setFirstDone`) or no job of
-// any other family waits. A family not yet measured is built by the one worker that took its first job; the others skip
-// its jobs until that worker reports how long the build took (`prepared`). A family that built in under `SLOW_MS` is open
-// to every worker, as before.
+// A build is a job of its own (Task 1b, b579): a worker that takes a sprite whose group it does not hold is given a build, then the
+// sprite (`next` marks the job `build: true`; the worker's reply carries the build's time, `prep`, and the page calls `built`). While it builds, that group is that worker's:
+// every other sprite of the group steps aside in the queue, holding no worker, and the other workers go on with the sprites of groups
+// that are ready. A group that took over `SLOW_MS` to build is built by that one worker only, since each worker that held it would pay
+// the whole cost and its memory again; one that built faster is open to every worker.
 
 import { spriteKey } from "./detail.js";
+import { groupKey } from "./core.js";
 
 /** The frame's rank among `count` frames, coarsest first: the bits of `frame` reversed (count 32: 0, 16, 8, 24, ...). */
 export function coarseRank(frame, count) {
@@ -33,39 +34,48 @@ export function coarseRank(frame, count) {
   return r;
 }
 
-/** A family whose models take longer than this to build, in ms, is slow. */
-export const SLOW_MS = 100;
+/** A group whose models take longer than this to build, in ms, is slow: built once, by one worker. */
+export const SLOW_MS = 1000;
 
 export class Order {
-  /** `prep`: family -> ms from a past run, so a slow family is known slow before its first build (a worker's own measure replaces it). `boxes`: name -> `[w, h, ax, ay]`, a sprite's picture box about its anchor (the table's), so on screen means the box meets the view. */
-  constructor({ boxes = {}, prep = {} } = {}) {
+  /** `boxes`: name -> `[w, h, ax, ay]`, a sprite's picture box about its anchor (the table's), so on screen means the box meets the view. */
+  constructor({ boxes = {} } = {}) {
     this.boxes = boxes;
     /** name -> the latest ask, for names waiting. */
     this.queue = new Map();
     /** name -> "queued" | "drawing" | "done" | "failed". */
     this.states = new Map();
-    /** family -> the set of workers that built its models. */
+    /** group -> the set of workers that built its models. */
     this.holders = new Map();
+    /** group -> the worker building its models now (the group's sprites wait for it). */
+    this.building = new Map();
     this.view = { x: 0, y: 0, w: 1, h: 1 };
-    /** family -> ms its models took to build: what `prep` (a past run's measure, `prep.json`) says, then what a worker measures. */
-    this.prep = new Map(Object.entries(prep));
-    /** Whether the first screen's sprites are all in (the page says so; slow families wait for it). */
-    this.firstDone = false;
+    /** The style the workers' models are in (Task 7): a worker draws one style's models at a time. */
+    this.style = "classic";
+    /** group -> ms its models took to build, as a worker measured it. */
+    this.prep = new Map();
   }
 
-  /** The page says the first screen is done: the slow families may be drawn now. */
-  setFirstDone(done = true) {
-    this.firstDone = done;
+  /** Worker `worker` built `group`'s models in `ms`: it holds them now, and the group's other sprites are free to go. */
+  built(group, ms, worker) {
+    this.prep.set(group, ms);
+    this.building.delete(group);
+    if (worker !== undefined) {
+      if (!this.holders.has(group)) this.holders.set(group, new Set());
+      this.holders.get(group).add(worker);
+    }
   }
 
-  /** A worker built `family`'s models in `ms`: kept, in place of any earlier figure for it. */
-  prepared(family, ms) {
-    this.prep.set(family, ms);
+  /** A build that failed on `worker`: the group is nobody's and counts as measured (0 ms), so no sprite waits on it for good. */
+  buildFailed(group, worker) {
+    if (this.building.get(group) === worker) this.building.delete(group);
+    if (!this.prep.has(group)) this.prep.set(group, 0);
   }
 
-  /** Whether `family` is slow: measured over `SLOW_MS`. */
-  slow(family) {
-    return (this.prep.get(family) || 0) > SLOW_MS;
+  /** Whether `key` is slow: a group (or any group of the family) measured over `SLOW_MS`. */
+  slow(key) {
+    for (const [g, ms] of this.prep) if (ms > SLOW_MS && (g === key || g.startsWith(`${key}/`))) return true;
+    return false;
   }
 
   /** The world rectangle the screen shows now. */
@@ -74,22 +84,46 @@ export class Order {
   }
 
   /**
-   * Ask for a sprite: `{name, family, x, y, frame?: {index, count, shown}, prefetch?}`. A name already waiting keeps its
-   * place in the queue but takes the newer ask (the frame showing now moves; so does a guest); one drawing or drawn is
-   * ignored.
+   * Ask for a sprite: `{name, family, style?, density?, x, y, frame?: {index, count, shown}, prefetch?}`. A name, style and
+   * density already waiting keep their place in the queue but take the newer ask (the frame showing now moves; so does a guest).
    */
   request(r) {
     if (!r.family) throw new Error(`no family for sprite ${r.name}`);
-    const id = spriteKey(r.name, r.density);
+    const id = jobKey(r.name, r.style, r.density);
     const s = this.states.get(id);
     if (s === "drawing" || s === "done" || s === "failed") return;
     this.states.set(id, "queued");
     this.queue.set(id, r);
   }
 
-  /** "queued", "drawing", "done", or undefined for a name never asked (at density `d`, the game's own by default). */
-  state(name, d = 1) {
-    return this.states.get(spriteKey(name, d));
+  /** "queued", "drawing", "done", or undefined for a sprite in a style and density. A number in the second place means density. */
+  state(name, styleOrDensity = "classic", density = 1) {
+    const style = typeof styleOrDensity === "string" ? styleOrDensity : "classic";
+    const d = typeof styleOrDensity === "number" ? styleOrDensity : density;
+    return this.states.get(jobKey(name, style, d));
+  }
+
+  /**
+   * Drop queued jobs for old styles when a new one is selected; a worker's in-flight job can still finish. A new style also forgets
+   * which workers hold which groups (a worker's models are one style's, and it builds the next style's afresh, group by group,
+   * as its sprites are asked for), so a group built in one style is never taken for another's. The groups' build times stay: how
+   * long a group takes does not depend on its look.
+   */
+  keepStyle(style) {
+    if (style !== this.style) {
+      this.style = style;
+      this.holders.clear();
+      this.building.clear();
+    }
+    let dropped = 0;
+    for (const [key, r] of this.queue) {
+      if ((r.style || "classic") !== style) {
+        this.queue.delete(key);
+        this.states.delete(key);
+        dropped++;
+      }
+    }
+    return dropped;
   }
 
   /** How many names wait for a worker. */
@@ -124,13 +158,12 @@ export class Order {
    */
   next(worker, mode = "any") {
     let mine = null, unheld = null, any = null;
-    // A slow family goes last: its jobs are held back while the first screen is not done and another family's job waits.
-    const others = [...this.queue.values()].some((r) => !this.slow(r.family));
     for (const r of this.queue.values()) {
-      if (!this.#may(worker, r.family, others)) continue;
+      const group = groupKey(r.family, r.name);
+      if (!this.#may(worker, group)) continue;
       const key = this.#key(r);
-      const entry = { r, key };
-      const held = this.holders.get(r.family);
+      const entry = { r, key, group };
+      const held = this.holders.get(group);
       if (!any || less(key, any.key)) any = entry;
       if (held && held.has(worker)) {
         if (!mine || less(key, mine.key)) mine = entry;
@@ -145,26 +178,27 @@ export class Order {
     else if (mode === "unheld") pick = ok(unheld) ? unheld : null;
     else pick = ok(mine) ? mine : ok(unheld) ? unheld : any;
     if (!pick) return null;
-    const { name, family } = pick.r;
-    const id = spriteKey(name, pick.r.density);
+    const { name } = pick.r;
+    const id = jobKey(name, pick.r.style, pick.r.density);
     this.queue.delete(id);
     this.states.set(id, "drawing");
-    if (!this.holders.has(family)) this.holders.set(family, new Set());
-    this.holders.get(family).add(worker);
-    return pick.r;
+    const held = this.holders.get(pick.group);
+    // A group this worker does not hold is built first, as a job of its own; while it is, the group is this worker's alone.
+    if (held && held.has(worker)) return pick.r;
+    // The first build of a group is the one the group's sprites wait on; once a worker holds it, another's build holds nobody back.
+    if (!held || held.size === 0) this.building.set(pick.group, worker);
+    return { ...pick.r, build: true };
   }
 
   /**
-   * Whether `worker` may take a job of `family` now. A family not yet measured, or a slow one, is the business of the
-   * worker that holds it (nobody else builds it; an unheld one goes to whoever asks first); a slow one is also held back
-   * until the first screen is done or no other family's job waits (`others`).
+   * Whether `worker` may take a job of `group` now: its own (it holds the models); else one nobody is building (the sprite steps aside while
+   * another worker builds, and holds no worker), unless the group is slow and a worker already holds it (only its holders draw it).
    */
-  #may(worker, family, others) {
-    const held = this.holders.get(family);
-    const measured = this.prep.has(family);
-    if (measured && !this.slow(family)) return true;
-    if (held && held.size > 0 && !held.has(worker)) return false;
-    return !this.slow(family) || this.firstDone || !others;
+  #may(worker, group) {
+    const held = this.holders.get(group);
+    if (held && held.has(worker)) return true;
+    if (this.building.has(group)) return this.building.get(group) === worker;
+    return !(this.slow(group) && held && held.size > 0);
   }
 
   /**
@@ -173,18 +207,16 @@ export class Order {
    */
   dropWorker(worker) {
     for (const held of this.holders.values()) held.delete(worker);
+    for (const [group, w] of [...this.building]) if (w === worker) this.building.delete(group);
   }
 
   /**
    * The names waiting, next first, at most `limit` of them: `{name, density}` in the order `next` would give them to an idle worker
-   * (the same keys against the view as it is now). A slow family's job is left out while the first screen is not done and another
-   * family's waits, as `next` leaves it. Read only when the Workers panel is open.
+   * (the same keys against the view as it is now). Read only when the Workers panel is open.
    */
   upcoming(limit = 5) {
-    const others = [...this.queue.values()].some((r) => !this.slow(r.family));
     const list = [];
     for (const r of this.queue.values()) {
-      if (this.slow(r.family) && !this.firstDone && others) continue;
       const entry = { r, key: this.#key(r) };
       let at = list.length;
       while (at > 0 && less(entry.key, list[at - 1].key)) at--;
@@ -196,22 +228,28 @@ export class Order {
     return list.map(({ r }) => ({ name: r.name, density: r.density > 1 ? r.density : 1 }));
   }
 
-  /** The sprite is drawn (`d`: its density, the game's own by default). */
-  finish(name, d = 1) {
-    this.states.set(spriteKey(name, d), "done");
+  /** The sprite is drawn (`style` and `d`: its density, the game's own by default). */
+  finish(name, styleOrDensity = "classic", density = 1) {
+    const style = typeof styleOrDensity === "string" ? styleOrDensity : "classic";
+    const d = typeof styleOrDensity === "number" ? styleOrDensity : density;
+    this.states.set(jobKey(name, style, d), "done");
   }
 
   /** The page evicted this picture (Task 31): it may be asked for again. A name that failed stays failed. */
-  forget(name, d = 1) {
-    const id = spriteKey(name, d);
+  forget(name, d = 1, style = "classic") {
+    const id = jobKey(name, style, d);
     if (this.states.get(id) === "done") this.states.delete(id);
   }
 
   /** A draw that failed: the name stays failed (not asked again; the page keeps its sketch). */
-  fail(name, d = 1) {
-    this.states.set(spriteKey(name, d), "failed");
+  fail(name, styleOrDensity = "classic", density = 1) {
+    const style = typeof styleOrDensity === "string" ? styleOrDensity : "classic";
+    const d = typeof styleOrDensity === "number" ? styleOrDensity : density;
+    this.states.set(jobKey(name, style, d), "failed");
   }
 }
+
+const jobKey = (name, style = "classic", density = 1) => spriteKey(`${style}\0${name}`, density);
 
 function less(a, b) {
   for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return a[i] < b[i];

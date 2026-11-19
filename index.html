@@ -16,6 +16,8 @@
     .group { display: flex; gap: 4px; }
   .gone { display: none !important; }
   #tools { flex: 1; }
+  #styles { flex: 0 0 auto; }
+  #styles .btn { flex: 0 0 auto; min-width: 60px; padding: 4px 6px; }
   #tray { bottom: 58px; border-top: 2px solid #14101c; border-bottom: 0; }
   #tray .btn { flex: 0 1 auto; min-width: 92px; min-height: 36px; flex-direction: row; gap: 6px; padding: 4px 10px; }
   #tray .btn.once { margin-left: 12px; }
@@ -66,7 +68,16 @@
   #stats { position: fixed; left: 8px; bottom: 90px; margin: 0; padding: 4px 8px; background: rgba(20, 18, 28, 0.82); color: #f4efe6;
            font: 12px/1.35 ui-monospace, Menlo, monospace; border-radius: 3px; white-space: pre; pointer-events: none; display: none; }
   #stats.on { display: block; }
-  @media (max-width: 480px) { .bar { font-size: 12px; } .rows { gap: 10px; } #top .rows { flex-direction: column; gap: 1px; } #speeds .btn { min-width: 44px; padding: 4px 6px; } }
+  @media (max-width: 600px) {
+    .bar { font-size: 12px; }
+    .rows { gap: 10px; }
+    #top .rows { flex-direction: column; gap: 1px; }
+    #speeds .btn { min-width: 44px; padding: 4px 6px; }
+    #bottom { flex-wrap: wrap; }
+    #tools { flex: 1 0 100%; }
+    #styles { flex: 1 1 auto; }
+    #styles .btn { flex: 1 1 0; min-width: 0; }
+  }
 </style>
 </head>
 <body>
@@ -76,7 +87,7 @@
 <div id="tip" class="gone"></div>
 <div id="tray" class="bar gone"></div>
 <div id="panel" class="gone"></div>
-<div id="bottom" class="bar"><div id="tools" class="group"></div></div>
+<div id="bottom" class="bar"><div id="tools" class="group"></div><div id="styles" class="group"></div></div>
 <pre id="stats"></pre>
 <script type="module" src="main.js"></script>
 </body>
