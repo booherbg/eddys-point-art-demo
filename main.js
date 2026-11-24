@@ -4,6 +4,8 @@
 // held); a build never moves it, and neither does the Detail row (Task 18: it changes how pictures are drawn, never the view). Task 4 adds the play: the build bar (Task 26: trays, a held tool inside one), the ghost with its price or the sim's refusal, the tap,
 // the speeds, and the two stat rows. Parameters: `noprefetch` (do not ask for the bar's pictures: E3 without them), `stats` (the dev overlay), `zoom` (1 to 5), `seed`, `workers`, `slow` (ms each job waits).
 import { Order } from "./order.js";
+import { artStamps } from "./core.js";
+import { openArtStore } from "./store.js";
 import { Pool, detectWorkerCount, detectPhone } from "./pool.js";
 import { cacheCap } from "./detail.js";
 import { Sprites } from "./sprites.js";
@@ -11,7 +13,7 @@ import { canvasMaker } from "./recolor.js";
 import { fpsRow, prepRows, wasmMemoryRow, jsHeapRow, jsHeapBytes, spriteCacheRow, spritesDrawnRow, spritesCachedRow, onScreenRow, drawingRow, DrawClock } from "./stats.js";
 import { openPark } from "./park.js";
 import { Scene, Camera, wheelStep, parseTable, makeAtlas, GroundAtlases, RECORD } from "./scene.js";
-import { STYLES, SPEEDS, OPENING, tileAt, diamond, Hands, Prefetch } from "./play.js";
+import { STYLES, LIGHTS, PALETTES, DEFAULT_PALETTE, lookKey, SPEEDS, OPENING, tileAt, diamond, Hands, Prefetch } from "./play.js";
 import { heldGroup, heldButton } from "./bar.js";
 import { TOOLS, START, tapTray, tapTool, tapRemove, labelOfTool, isRide, makeBuildBar } from "./trays.js";
 import { makePanel } from "./panel.js";
@@ -41,9 +43,15 @@ const clock = new DrawClock();
 
 const [parkBytes, forgeBytes] = await Promise.all(["park.wasm", "forge_worker.wasm"].map(async (f) => (await fetch(f)).arrayBuffer()));
 const [api, forgeModule] = await Promise.all([openPark(parkBytes, Number(q.get("seed") || 0)), WebAssembly.compile(forgeBytes)]);
+const stamps = await artStamps(forgeModule, q.get("stamps") ?? "");
+const store = await openArtStore(stamps);
 const table = parseTable(api.table());
+let selectedStyle = "classic";
+let selectedLight = "day";
+let selectedPalette = DEFAULT_PALETTE;
+const look = () => lookKey(selectedStyle, selectedLight, selectedPalette);
 // The ground, drawn in code: each density is the same recipe at finer pixels, built on a turn of its own when first needed.
-const atlas = new GroundAtlases({ build: (d) => makeAtlas(api.atlas(d), (w, h) => Object.assign(document.createElement("canvas"), { width: w, height: h }), d) });
+const atlas = new GroundAtlases({ build: (d, light) => makeAtlas(api.atlas(d, light), (w, h) => Object.assign(document.createElement("canvas"), { width: w, height: h }), d) });
 
 const order = new Order({ boxes: table.boxes });
 // The picture cache's byte budget (Task 31, b582): 64 MB on a phone (pool.js's phone rule), 256 MB on a laptop, `?cache=<MB>` for another.
@@ -54,6 +62,8 @@ const pool = new Pool({
   count: workers,
   slow,
   order,
+  store,
+  stamps,
   makeWorker: () => new Worker("pool-worker.js", { type: "module" }),
   onDrawn: (r) => (sprites.landed(r, nowS()), clock.landed(nowS())),
   onError: (r) => (sprites.failed(r), console.log(`lf-failed ${r.name}: ${r.error || "no picture"}`)),
@@ -161,13 +171,33 @@ const speedBar = heldGroup(document, document.getElementById("speeds"), SPEEDS.m
   speedBar.set(i);
 });
 const styleBar = heldGroup(document, document.getElementById("styles"), STYLES, (i) => {
-  const style = STYLES[i].toLowerCase();
-  sprites.setStyle(style);
-  pool.setStyle(style);
-  if (window.__lf) window.__lf.style = style;
+  selectedStyle = STYLES[i].toLowerCase();
+  const appearance = look();
+  sprites.setStyle(appearance);
+  pool.setStyle(appearance);
+  if (window.__lf) Object.assign(window.__lf, { style: selectedStyle, light: selectedLight, look: appearance });
   styleBar.set(i);
 });
 styleBar.set(0);
+const lightBar = heldGroup(document, document.getElementById("lights"), LIGHTS, (i) => {
+  selectedLight = LIGHTS[i].toLowerCase();
+  const appearance = look();
+  atlas.setLight(selectedLight);
+  sprites.setStyle(appearance);
+  pool.setStyle(appearance);
+  if (window.__lf) Object.assign(window.__lf, { style: selectedStyle, light: selectedLight, look: appearance });
+  lightBar.set(i);
+});
+lightBar.set(0);
+const paletteBar = heldGroup(document, document.getElementById("palettes"), PALETTES, (i) => {
+  selectedPalette = PALETTES[i].toLowerCase();
+  const appearance = look();
+  sprites.setStyle(appearance);
+  pool.setStyle(appearance);
+  if (window.__lf) Object.assign(window.__lf, { style: selectedStyle, light: selectedLight, palette: selectedPalette, look: appearance });
+  paletteBar.set(i);
+});
+paletteBar.set(PALETTES.findIndex((name) => name.toLowerCase() === DEFAULT_PALETTE));
 speedBar.set(1);
 let wheelAt = -Infinity;
 canvas.addEventListener("wheel", (e) => {
@@ -198,13 +228,25 @@ const cores = Number.isFinite(navigator.hardwareConcurrency) ? navigator.hardwar
 const say = (why) => {
   flash = { line: why, until: performance.now() + 1600, ok: false };
 };
+let cacheSizes = [];
+let readingCache = false;
+function readCacheSizes() {
+  if (readingCache) return;
+  readingCache = true;
+  store.sizes().then((sizes) => { cacheSizes = sizes; }).finally(() => { readingCache = false; });
+}
 const workersPanel = makeWorkersPanel(document, document.body, {
-  read: () => snapshot({ pool, order, cores, suggested, detail }),
+  read: () => {
+    readCacheSizes();
+    return snapshot({ pool, order, cores, suggested, sizes: cacheSizes });
+  },
   taps: workerTaps({
     pool,
     suggested,
-    detail: () => detail,
-    clear: () => clearCache({ sprites, pool, clock, now: nowS() }),
+    clear: async () => {
+      await clearCache({ sprites, pool, detail, clock, now: nowS() });
+      cacheSizes = await store.sizes();
+    },
     say,
     refresh: () => workersPanel.refresh(nowS()),
     close: () => shutWorkers(),
@@ -224,7 +266,7 @@ sync();
 
 // ---- the dev overlay's numbers: E3 (times) and E5 (frame time while drawing) ----
 const frames = { all: [], drawing: [], idle: [] };
-const lf = (window.__lf = { workers, style: "classic", readyMs: null, firstScreenMs: null, allSetMs: null, firstNames: 0, drawn: 0, missing: "", busyMax: 0 });
+const lf = (window.__lf = { workers, style: "classic", light: "day", palette: DEFAULT_PALETTE, look: look(), readyMs: null, firstScreenMs: null, allSetMs: null, firstNames: 0, drawn: 0, missing: "", busyMax: 0 });
 lf.styleSettled = () => pool.settled();
 // Read-only helpers for the scripted run (never a way to build): where a tile is on the screen, whether the sim would take a
 // tool there (`Park::test`), and what the ground there is. A run's taps go through the page's own buttons and pointer events.

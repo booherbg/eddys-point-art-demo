@@ -10,7 +10,8 @@ import { paint, WORN_CAP } from "./recolor.js";
 import { spriteKey, MAX_STEP } from "./detail.js";
 
 const STYLES = ["classic", "soft", "toybox"];
-const cacheKey = (style, name, density = 1) => spriteKey(`${style}\0${name}`, density);
+const lookKey = (style = "classic") => (style.includes("@") ? style : `${style}@day`);
+const cacheKey = (style, name, density = 1) => spriteKey(`${lookKey(style)}\0${name}`, density);
 
 export const INK = "#2A1C3E";
 /** The pale sheet the box is drawn on (the palette's paper tone), so the pencil shows on any ground. */
@@ -92,7 +93,7 @@ export class Sprites {
     this.sketched = new Set();
   }
 
-  /** Select a whole forge style while keeping every style's pictures in its own cache. */
+  /** Select a style and light together, keeping every look's pictures in its own cache. */
   setStyle(style) {
     if (style === this.style) return;
     this.previousStyle = this.style;
@@ -223,21 +224,17 @@ export class Sprites {
     }
   }
 
-  /**
-   * Drops every finer picture held (density above 1) so the view draws them again (the Workers panel's Clear cache, Task 28): the game's size of each
-   * stays and stands in, so nothing goes blank, and the order may be asked for each again (`onEvict`). Her worn pictures made from a dropped
-   * one go with it. A picture still on its way lands as usual. Returns how many were dropped.
-   */
-  clearFine() {
+  /** Drop this detail's pictures and their recolors, so the view may ask for them again. */
+  clearDetail(detail) {
     const gone = new Set();
     for (const [key, e] of [...this.mem]) {
-      if (e.density <= 1) continue;
+      if (e.density !== detail) continue;
       this.mem.delete(key);
       this.bytes -= e.held;
-      this.fineBytes -= e.w * e.h * 4;
+      if (e.density > 1) this.fineBytes -= e.w * e.h * 4;
       e.bitmap?.close?.();
       gone.add(key);
-      this.onEvict(e.name, e.density);
+      this.onEvict(e.name, e.density, e.style);
     }
     for (const [key, w] of [...this.worn]) {
       if (gone.has(key.slice(0, key.lastIndexOf("|")))) {

@@ -67,8 +67,12 @@ export class Order {
   }
 
   /** A build that failed on `worker`: the group is nobody's and counts as measured (0 ms), so no sprite waits on it for good. */
-  buildFailed(group, worker) {
+  releaseBuild(group, worker) {
     if (this.building.get(group) === worker) this.building.delete(group);
+  }
+
+  buildFailed(group, worker) {
+    this.releaseBuild(group, worker);
     if (!this.prep.has(group)) this.prep.set(group, 0);
   }
 
@@ -239,6 +243,12 @@ export class Order {
   forget(name, d = 1, style = "classic") {
     const id = jobKey(name, style, d);
     if (this.states.get(id) === "done") this.states.delete(id);
+  }
+
+  /** A copy cleared while it was in flight may be asked for again. */
+  cancel(name, d, style) {
+    const id = jobKey(name, style, d);
+    if (this.states.get(id) === "drawing") this.states.delete(id);
   }
 
   /** A draw that failed: the name stays failed (not asked again; the page keeps its sketch). */

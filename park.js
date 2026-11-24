@@ -2,6 +2,7 @@
 // tiles (`park/src/lib.rs`, plain C-ABI). A plain ES module with no DOM, so node tests load the same wasm the page does.
 
 const dec = new TextDecoder();
+const LIGHT_ID = { day: 0, dusk: 1, night: 2 };
 
 /** Instantiate the park's wasm (bytes or a compiled module), start a park from `seed`, and wrap its exports. */
 export async function openPark(source, seed = 0) {
@@ -68,8 +69,10 @@ export async function openPark(source, seed = 0) {
     /** The names the last list could not draw, one a line: empty, or a bug. */
     missing: () => text(x.lf_missing(), x.lf_missing_len()),
     /** The ground tiles' RGBA at `density` (`lf_atlas_len` bytes): 44 tiles of 64 by 32, times the density each way, one under another. */
-    atlas(density = 1) {
-      const p = x.lf_atlas(density); // the call can grow the memory, so the buffer is read after it
+    atlas(density = 1, light = "day") {
+      const id = LIGHT_ID[light];
+      if (id === undefined) throw new Error(`unknown light: ${light}`);
+      const p = x.lf_atlas_light(density, id); // the call can grow the memory, so the buffer is read after it
       return new Uint8Array(x.memory.buffer, p, x.lf_atlas_len(density)).slice();
     },
     /** The ground's atlas index for each of the `w` by `h` tiles from (`x0`, `y0`), row by row; 255 is the void. */

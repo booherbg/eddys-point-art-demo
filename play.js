@@ -7,6 +7,18 @@
 
 /** Whole forge looks the player can hold for the park. */
 export const STYLES = ["Classic", "Soft", "Toybox"];
+/** The held light used by the live forge renderer and the demo ground. */
+export const LIGHTS = ["Day", "Dusk", "Night"];
+/** Whole candidate palettes beside the game's own, which stays the default and is held at open. The controller picks two
+ * of the three candidates for Blaine's look (live forge Task 22), so all three are on the row until then. */
+export const PALETTES = ["Garden", "Sunset", "Harbor", "Game"];
+export const DEFAULT_PALETTE = "game";
+
+/** A look's pictures have their own cache key; Game keeps the earlier key for today's pictures. */
+export function lookKey(style, light, palette = DEFAULT_PALETTE) {
+  const base = `${style}@${light}`;
+  return palette === DEFAULT_PALETTE ? base : `${base}@${palette}`;
+}
 
 /** The button that acts once: ten guests walk up the road. */
 export const ADD_TEN = "Add 10 guests";

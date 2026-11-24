@@ -1,0 +1,10 @@
+cars	car_bobsled_h0_p1
+cars	car_bobsled_h0_p1_front_hold0
+cars	guest_ride_s0_h0_p1_hold
+rides_flat	ferris_f4
+scenery_plants	shadow_tree_small_sway
+scenery_plants	tree_small_sway
+track	support_bobsled_foot
+track	support_bobsled_seg
+track	track_bobsled_lift_h0
+track	track_bobsled_straight_h1

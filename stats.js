@@ -28,6 +28,21 @@ export const spriteCacheRow = (bytes, cap) => (cap === undefined || !Number.isFi
 export const spritesDrawnRow = (n) => `Sprites drawn: ${n}`;
 export const spritesCachedRow = (n) => `Sprites cached: ${n}`;
 export const onScreenRow = (n) => `On screen: ${n}`;
+export function cacheRows({ hits, misses, sizes }) {
+  const totals = new Map([[1, { entries: 0, bytes: 0 }], [2, { entries: 0, bytes: 0 }], [3, { entries: 0, bytes: 0 }]]);
+  for (const [density, size] of sizes) {
+    const total = totals.get(density);
+    if (total) {
+      total.entries++;
+      total.bytes += size;
+    }
+  }
+  return [
+    `Cache hits: ${hits}`,
+    `Cache misses: ${misses}`,
+    ...Array.from(totals, ([d, { entries, bytes }]) => `Cache ${d}x: ${entries} ${entries === 1 ? "entry" : "entries"}, ${(bytes / 1_000_000).toFixed(1)} MB`),
+  ];
+}
 /** The bar's row while finer pictures are still coming (`have` landed of the `of` this view wants); "" once the last has landed. */
 /** The bar's row: "Drawing: n of m" while pictures are on their way; once none is, and the memory cap holds some below the step (`held`), the sentence that says so (live forge Task 30's ruling). */
 export const HELD_BACK = "Some pictures stay at a lower detail to save memory.";

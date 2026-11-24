@@ -273,26 +273,39 @@ export function makeAtlas(rgba, canvasFactory, density = 1) {
  * `build(d)` makes an atlas `{draw(ctx, index, x, y)}`.
  */
 export class GroundAtlases {
-  constructor({ build, schedule = (f) => setTimeout(f, 0) }) {
+  constructor({ build, schedule = (f) => setTimeout(f, 0), light = "day" }) {
     this.build = build;
     this.schedule = schedule;
-    this.atlases = new Map([[1, build(1)]]);
+    this.light = light;
+    this.atlases = new Map([[atlasKey(light, 1), build(1, light)]]);
     this.pending = new Set();
   }
 
+  /** Switch the code-drawn ground with the held forge light; the base atlas is small enough to make immediately. */
+  setLight(light) {
+    if (light === this.light) return;
+    this.light = light;
+    const key = atlasKey(light, 1);
+    if (!this.atlases.has(key)) this.atlases.set(key, this.build(1, light));
+  }
+
   draw(ctx, index, x, y, d = 1) {
+    const light = this.light;
     let k = d;
-    while (k > 1 && !this.atlases.has(k)) k--;
-    if (d > 1 && !this.atlases.has(d) && !this.pending.has(d)) {
-      this.pending.add(d);
+    while (k > 1 && !this.atlases.has(atlasKey(light, k))) k--;
+    const key = atlasKey(light, d);
+    if (d > 1 && !this.atlases.has(key) && !this.pending.has(key)) {
+      this.pending.add(key);
       this.schedule(() => {
-        this.atlases.set(d, this.build(d));
-        this.pending.delete(d);
+        this.atlases.set(key, this.build(d, light));
+        this.pending.delete(key);
       });
     }
-    this.atlases.get(k).draw(ctx, index, x, y);
+    this.atlases.get(atlasKey(light, k)).draw(ctx, index, x, y);
   }
 }
+
+const atlasKey = (light, density) => `${light}@${density}`;
 
 /** Whether a wheel event at `now` (ms) may zoom: one step per 150 ms after the last one that did. */
 export function wheelStep(last, now) {

@@ -11,6 +11,7 @@
 // Detail (`Pool.meanMs`: the family's mean at the density, else the whole pool's mean), holds at `HOLD` until the picture lands, and says
 // nothing on screen about being an estimate.
 import { onceButton } from "./bar.js";
+import { cacheRows } from "./stats.js";
 import { WORKER_RULE, MIN_WORKERS, MAX_WORKERS } from "./pool.js";
 
 /** The Tools tray's button, and the panel's own buttons. */
@@ -21,7 +22,6 @@ export const RESET = "Reset";
 export const CLEAR = "Clear cache";
 export const CLOSE = "Close";
 /** What a tap on a grey button says (new sentences of this task, reported to the controller). */
-export const ONE_X_DRAWN = "1x is already drawn.";
 export const MOST = `${MAX_WORKERS} is the most.`;
 export const FEWEST = `${MIN_WORKERS} is the fewest.`;
 /** A bar's most while its picture has not landed (ruling: holds at 95%). */
@@ -52,7 +52,7 @@ export function drainFraction(have, of) {
 }
 
 /** What the panel shows right now, read from the pool and the order (the page's one call while the panel is open). */
-export function snapshot({ pool, order, cores, suggested, detail }) {
+export function snapshot({ pool, order, cores, suggested, sizes = [] }) {
   return {
     workers: pool.view(),
     waiting: order.waiting(),
@@ -62,7 +62,7 @@ export function snapshot({ pool, order, cores, suggested, detail }) {
     cores,
     count: pool.size,
     suggested,
-    detail,
+    cache: cacheRows({ ...pool.cache, sizes }),
   };
 }
 
@@ -103,6 +103,7 @@ export function makeWorkersPanel(doc, parent, { read, taps }) {
   const nextRows = Array.from({ length: NEXT_SHOWN }, () => text("wnext"));
   const drawn = text("stat");
   const drain = bar();
+  const cache = Array.from({ length: 5 }, () => text("stat"));
   const cores = text("stat");
   const count = text("stat");
   const suggested = text("stat");
@@ -115,6 +116,7 @@ export function makeWorkersPanel(doc, parent, { read, taps }) {
     ...nextRows,
     drawn,
     drain.el,
+    ...cache,
     cores,
     count,
     suggested,
@@ -161,7 +163,7 @@ export function makeWorkersPanel(doc, parent, { read, taps }) {
     set(suggested, suggestedRow(d.suggested));
     minus.grey(d.count <= MIN_WORKERS ? FEWEST : null);
     plus.grey(d.count >= MAX_WORKERS ? MOST : null);
-    clear.grey(d.detail <= 1 ? ONE_X_DRAWN : null);
+    cache.forEach((row, i) => set(row, d.cache?.[i] ?? ""));
   }
 
   return {
@@ -207,27 +209,27 @@ export function makeWorkersPanel(doc, parent, { read, taps }) {
   };
 }
 
-/** Drops every finer picture and starts the "Drawn" count afresh from now; the 1x pictures stay and stand in (Clear cache). Returns how many went. */
-export function clearCache({ sprites, pool, clock = null, now = 0 }) {
-  const n = sprites.clearFine();
+/** Clear both copies at the held detail, and start a fresh burst. Other densities stay available. */
+export async function clearCache({ sprites, pool, detail, clock = null, now = 0 }) {
+  const pending = pool.clearCached(detail);
+  sprites.clearDetail(detail);
   pool.newBurst();
   if (clock) clock.start(now);
-  return n;
+  await pending;
 }
 
 /**
- * What the panel's buttons do. `say(why)` is a tap on a grey one; `refresh()` redraws the panel at once; `detail()` is the Detail step now;
- * `clear()` drops the cache (`clearCache`). - and + keep the count from 1 to 12 and Reset goes to `suggested`.
+ * What the panel's buttons do. `say(why)` is a tap on a grey one; `refresh()` redraws the panel after an action.
+ * - and + keep the count from 1 to 12 and Reset goes to `suggested`.
  */
-export function workerTaps({ pool, suggested, detail, clear, say, refresh, close }) {
+export function workerTaps({ pool, suggested, clear, say, refresh, close }) {
   const to = (n) => (pool.resize(Math.max(MIN_WORKERS, Math.min(MAX_WORKERS, n))), refresh());
   return {
     minus: () => to(pool.size - 1),
     plus: () => to(pool.size + 1),
     reset: () => to(suggested),
-    clear: () => {
-      if (detail() <= 1) return say(ONE_X_DRAWN);
-      clear();
+    clear: async () => {
+      await clear();
       refresh();
     },
     close,

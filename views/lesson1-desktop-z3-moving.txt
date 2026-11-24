@@ -1,0 +1,8 @@
+gate	gate_closed_r0
+gate	gate_r0
+gate	shadow_gate_r0
+scenery_paths	name_plate
+scenery_plants	flowers_yellow_sway_half
+scenery_plants	shadow_tree_pine_sway_half
+scenery_plants	tree_pine_sway_half
+scenery_plants	tree_round_sway_half

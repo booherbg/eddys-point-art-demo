@@ -2,6 +2,7 @@
 // one compiled module, dealt jobs by the order. No DOM at load, so node imports it for its tests; the page passes the
 // real `Worker` factory.
 import { groupKey } from "./core.js";
+import { picture } from "./draw-job.js";
 
 /**
  * How many workers (ruling 6). A phone (a coarse pointer and a short side under 700 CSS px) gets three at most; any
@@ -51,11 +52,18 @@ export class Pool {
    * The count can change while it runs (`resize`, Task 28): a worker is added with no reload, and one taken away finishes the sprite it is
    * drawing first, so no job is lost or drawn twice. Each worker keeps its id for good (a taken one's id is never reused).
    */
-  constructor({ module, count, makeWorker, order, onDrawn, onError, slow = 0, now = () => performance.now() / 1000 }) {
+  constructor({ module, count, makeWorker, order, onDrawn, onError, store, stamps, slow = 0, wantFrg = false, now = () => performance.now() / 1000 }) {
     this.order = order;
-    this.style = "classic";
+    /** Whether each landed copy carries its one-sprite `FRG1` bytes (`frg`) too: the bench lands them itself. */
+    this.wantFrg = wantFrg;
+    this.style = "classic@day";
     this.slow = slow;
     this.module = module;
+    this.store = store;
+    this.stamps = stamps;
+    this.cache = { hits: 0, misses: 0 };
+    this.epochs = new Map();
+    this.clearing = new Map();
     this.makeWorker = makeWorker;
     this.now = now;
     this.onDrawn = onDrawn || (() => {});
@@ -89,7 +97,7 @@ export class Pool {
           res();
         }
       };
-      w.postMessage({ kind: "init", id, module: this.module });
+      w.postMessage({ kind: "init", id, module: this.module, stamps: this.stamps });
     });
   }
 
@@ -208,31 +216,71 @@ export class Pool {
         const density = job.density > 1 ? job.density : 1;
         const slot = this.slots.get(id);
         const style = job.style || "classic";
-        slot.job = { name: job.name, family: job.family, density, style, at: this.now() };
-        slot.w.postMessage({ kind: "draw", id, name: job.name, family: job.family, style, density, slow: this.slow });
+        slot.job = { name: job.name, family: job.family, density, style, wantFrg: this.wantFrg, at: this.now(), epoch: this.epochs.get(density) };
+        if (this.store) this.#lookUp(slot);
+        else this.#draw(slot);
       }
     }
   }
 
+  #draw(slot, cacheGeneration) {
+    const { name, family, density, style, wantFrg } = slot.job;
+    slot.w.postMessage({ kind: "draw", id: slot.id, name, family, density, style, wantFrg, slow: this.slow, cacheGeneration });
+  }
+
+  async #lookUp(slot) {
+    const job = slot.job;
+    await this.clearing.get(job.density);
+    const { copy, generation } = await this.store.read(job);
+    let hit;
+    if (copy) {
+      try {
+        hit = await picture(copy, job, (rgba, w, h) => createImageBitmap(new ImageData(rgba, w, h)));
+      } catch {
+        // A bad bundle is a miss. A successful draw will replace it.
+      }
+    }
+    if (!this.slots.has(slot.id)) {
+      hit?.bitmap.close();
+      return;
+    }
+    if (job.epoch !== this.epochs.get(job.density) || hit) {
+      this.#message(slot.id, { ...job, ...hit, cached: !!hit });
+    } else {
+      this.cache.misses++;
+      this.#draw(slot, generation);
+    }
+  }
+
+  async clearCached(density) {
+    this.epochs.set(density, (this.epochs.get(density) ?? 0) + 1);
+    this.cache.hits = this.cache.misses = 0;
+    const pending = this.store?.clear(density);
+    this.clearing.set(density, pending);
+    await pending;
+    if (this.clearing.get(density) === pending) this.clearing.delete(density);
+  }
+
   #message(id, m) {
     const slot = this.slots.get(id);
+    const stale = slot?.job && slot.job.epoch !== this.epochs.get(m.density);
     // A worker that built a group's models says how long it took, and holds them from then on; a failed build frees the group's
     // other sprites (and counts as measured, so none waits on it for good).
     // A reply in a style since left says nothing about the workers' models: the switch already forgot them (Task 7).
     const group = groupKey(m.family, m.name);
     if ((m.style || "classic") === this.style) {
       if (m.prep !== undefined) this.order.built(group, m.prep, id);
+      else if (m.cached || stale) this.order.releaseBuild(group, id);
       else if (m.kind === "failed") this.order.buildFailed(group, id);
     }
-    if (m.kind === "drew") {
+    if (stale) {
+      m.bitmap?.close();
+      this.order.cancel(m.name, m.density, m.style);
+      this.burst.of--;
+    } else if (m.kind === "drew") {
       this.order.finish(m.name, m.style || "classic", m.density);
-      this.stats.drawn++;
-      this.stats.ms += m.ms || 0;
-      const key = `${m.family}@${m.density > 1 ? m.density : 1}`;
-      const mean = this.means.get(key) || { n: 0, ms: 0 };
-      mean.n++;
-      mean.ms += m.ms || 0;
-      this.means.set(key, mean);
+      if (m.cached) this.cache.hits++;
+      else this.#recordDraw(m);
       this.burst.have++;
       this.onDrawn(m);
     } else if (m.kind === "failed") {
@@ -251,7 +299,19 @@ export class Pool {
     this.#schedule();
   }
 
+  #recordDraw(m) {
+    this.stats.drawn++;
+    this.stats.ms += m.ms || 0;
+    const key = `${m.family}@${m.density > 1 ? m.density : 1}`;
+    const mean = this.means.get(key) || { n: 0, ms: 0 };
+    mean.n++;
+    mean.ms += m.ms || 0;
+    this.means.set(key, mean);
+  }
+
   close() {
     for (const s of this.slots.values()) s.w.terminate();
+    this.slots.clear();
+    this.idle.length = 0;
   }
 }

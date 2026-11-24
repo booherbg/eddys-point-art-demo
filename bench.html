@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Live sharp art bench</title>
+<style>
+  html, body { margin: 0; min-height: 100%; background: #1d2a22; color: #f4efe6; }
+  body { font: 13px/1.45 ui-monospace, Menlo, monospace; padding: 10px 12px; }
+  h1 { font-size: 15px; margin: 0 0 4px; font-weight: 600; }
+  #head, #live { margin: 0 0 8px; color: #cfd8c8; white-space: pre-wrap; }
+  #tables { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 10px; }
+  .block { background: rgba(20, 18, 28, 0.82); border-radius: 3px; padding: 6px 10px; }
+  .block h2 { font-size: 13px; margin: 0 0 4px; color: #ffd24a; font-weight: 600; }
+  .block pre { margin: 0; white-space: pre-wrap; }
+  #gl { position: fixed; right: 4px; bottom: 4px; width: 16px; height: 16px; opacity: 0.01; }
+</style>
+</head>
+<body>
+<h1>Live sharp art bench</h1>
+<div id="head">Starting</div>
+<div id="live"></div>
+<div id="tables"></div>
+<canvas id="gl" width="16" height="16"></canvas>
+<script type="module" src="bench-page.js"></script>
+</body>
+</html>

@@ -27,7 +27,7 @@ export function groupKey(family, name) {
 export const hex8 = (n) => n.toString(16).padStart(8, "0");
 
 /** Instantiate `module` (a compiled `WebAssembly.Module`, or its bytes) and wrap its exports. */
-export async function instantiate(moduleOrBytes, style = "classic") {
+export async function instantiate(moduleOrBytes, style = "classic", light = "day", palette = "game") {
   const module = moduleOrBytes instanceof WebAssembly.Module ? moduleOrBytes : await WebAssembly.compile(moduleOrBytes);
   const instance = await WebAssembly.instantiate(module, {});
   const x = instance.exports;
@@ -39,9 +39,13 @@ export async function instantiate(moduleOrBytes, style = "classic") {
     return [p, b.length];
   };
   const [stylePtr, styleLen] = put(style);
-  const styleSet = x.lf_set_style(stylePtr, styleLen);
+  const [lightPtr, lightLen] = put(light);
+  const [palettePtr, paletteLen] = put(palette);
+  const lookSet = x.lf_set_look(stylePtr, styleLen, lightPtr, lightLen, palettePtr, paletteLen);
   x.lf_free(stylePtr, styleLen);
-  if (styleSet !== 1) throw new Error(`unknown drawing style: ${style}`);
+  x.lf_free(lightPtr, lightLen);
+  x.lf_free(palettePtr, paletteLen);
+  if (lookSet !== 1) throw new Error(`unknown drawing style, light, or palette: ${style}/${light}/${palette}`);
   const take = (p) => (p === 0 ? null : mem().slice(p, p + x.lf_len()));
   const prepared = new Map();
   /** group key -> true: the groups this instance has built (a family's own models, or one kind's portraits; `groupKey`). */
@@ -51,6 +55,12 @@ export async function instantiate(moduleOrBytes, style = "classic") {
     /** Every family's name. */
     families() {
       return dec.decode(take(x.lf_families())).split("\n").filter(Boolean);
+    },
+    stamp(family) {
+      const [p, n] = put(family);
+      const stamp = BigInt.asUintN(64, x.lf_stamp(p, n));
+      x.lf_free(p, n);
+      return stamp === 0n ? null : stamp.toString(16).padStart(16, "0");
     },
     /** Build `family`'s models (the fixed cost) and give its sprite names in bundle order; null for no such family. */
     prepare(family) {
@@ -89,8 +99,22 @@ export async function instantiate(moduleOrBytes, style = "classic") {
       lastCodes = out ? take(x.lf_codes()) : null;
       return out;
     },
+    /** The bytes this instance's wasm memory holds now (the bench reads the most any worker needed). */
+    memoryBytes: () => x.memory.buffer.byteLength,
     /** The mask of the sprite `draw` just drew, a byte a pixel (0 takes no slot), or null when it is no person's. */
     codes: () => lastCodes,
     has: (family) => prepared.has(family),
   };
+}
+
+/** Every known family has its own stamp. A test URL may replace one or more stamps. */
+export async function artStamps(module, overrides = "") {
+  const forge = await instantiate(module);
+  const families = [...forge.families(), "queue_rails"];
+  const stamps = Object.fromEntries(families.map((family) => [family, forge.stamp(family)]).filter(([, stamp]) => stamp !== null));
+  for (const pair of overrides.split(",")) {
+    const [family, stamp] = pair.split(":");
+    if (stamp && Object.hasOwn(stamps, family)) stamps[family] = stamp;
+  }
+  return stamps;
 }
