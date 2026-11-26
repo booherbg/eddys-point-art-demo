@@ -3,6 +3,7 @@
 // (transferred, not copied). `makeBitmap(rgba, w, h)` is `createImageBitmap(new ImageData(..))` in a worker; the tests
 // pass a stand-in. Returns the message to post and the transfer list.
 import { decodeOne } from "./frg.js";
+import { grade } from "./grade.js";
 
 export async function drawJob(forge, { family, name, density = 1, style, wantFrg }, makeBitmap, clock = () => performance.now()) {
   const t0 = clock();
@@ -24,10 +25,14 @@ export async function drawJob(forge, { family, name, density = 1, style, wantFrg
   return { msg: { ...msg, ms: clock() - t0, prep, ...(forge.memoryBytes ? { mem: forge.memoryBytes() } : {}) }, transfer, copy };
 }
 
-/** Turn either a worker's fresh bundle or a stored copy into the picture the page uses. */
+/**
+ * Turn either a worker's fresh bundle or a stored copy into the picture the page uses, graded for its look (`grade.js`; the store
+ * keeps the forge's own bytes, so a grade can change with no cache to clear).
+ */
 export async function picture({ frg, mask }, { name, family, density, style, wantFrg }, makeBitmap) {
   const s = decodeOne(frg);
   if (s.name !== name || (mask && mask.length !== s.w * s.h)) throw new Error("Invalid sprite copy");
+  grade(s.rgba, style);
   const bitmap = await makeBitmap(s.rgba, s.w, s.h);
   const msg = { kind: "drew", name, family, density, bitmap, w: s.w, h: s.h, ax: s.ax, ay: s.ay, ...(style ? { style } : {}) };
   if (wantFrg) msg.frg = frg;

@@ -14,22 +14,28 @@ export const DETAIL_ROW = "Detail:";
 /** No fine picture is wider or taller than this (a browser's canvas and texture limit); a step that would pass it stays one lower. */
 export const MAX_PIXELS = 4096;
 /**
- * The picture cache's byte budget (live forge Task 31, b582): everything the page holds of drawn pictures, the game's size included.
- * A laptop's, and a phone's (pool.js's phone rule: the phone's limits are the phone's). `?cache=<megabytes>` tries another.
+ * The picture cache's byte budget (live forge Task 31, b582; no cap by default since Blaine, 2026-11-26: "Let the phone deal with
+ * it, let's not make the assumptions"). Every device, the phone included, keeps every picture it draws; `?cache=<megabytes>` sets a
+ * cap, for tests of what the cache does when one holds.
  */
 export const MIB = 1024 * 1024;
-export const CACHE_CAP = 256 * MIB;
-export const CACHE_CAP_PHONE = 64 * MIB;
+export const NO_CAP = Infinity;
 
-/** The cap for this browser: `param` (the `?cache=` text, in megabytes) when it is a positive number, else the phone's or the laptop's. */
-export function cacheCap({ phone, param = null }) {
+/** The cap for this browser: `param` (the `?cache=` text, in megabytes) when it is a positive number, else none. */
+export function cacheCap({ param = null } = {}) {
   const mb = param === null || param === undefined || param === "" ? NaN : Number(param);
   if (Number.isFinite(mb) && mb > 0) return mb * MIB;
-  return phone ? CACHE_CAP_PHONE : CACHE_CAP;
+  return NO_CAP;
 }
 
 /** The cache's key for sprite `name` at density `d`: the game's own size keeps its name; a finer one is `name@d`. */
 export const spriteKey = (name, d) => (d && d > 1 ? `${name}@${d}` : name);
+
+/**
+ * The screen pixels one art pixel covers: the camera's zoom times the device's pixel ratio (whole). A phone's screen at zoom 1 already
+ * shows an art pixel three pixels wide, so its Detail steps show there too (2026-11-26: they did nothing below zoom 2, "holding back").
+ */
+export const screenZoom = (zoom, dpr) => zoom * Math.max(1, Math.round(dpr || 1));
 
 /** The density a view at `zoom` draws at under step `detail`. */
 export const fineDensity = (detail, zoom) => Math.max(1, Math.min(detail, zoom));

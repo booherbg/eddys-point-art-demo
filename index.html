@@ -16,7 +16,8 @@
     .group { display: flex; gap: 4px; }
   .gone { display: none !important; }
   #tools { flex: 1; }
-  #styles, #lights, #palettes { flex: 0 0 auto; }
+  #styles, #lights, #palettes { flex: 0 0 auto; align-items: center; }
+  .bar .rowlabel { flex: 0 0 auto; padding: 0 2px 0 6px; white-space: nowrap; }
   #styles .btn, #lights .btn, #palettes .btn { flex: 0 0 auto; min-width: 60px; padding: 4px 6px; }
   #tray { bottom: 58px; border-top: 2px solid #14101c; border-bottom: 0; }
   #tray .btn { flex: 0 1 auto; min-width: 92px; min-height: 36px; flex-direction: row; gap: 6px; padding: 4px 10px; }
@@ -80,7 +81,8 @@
     #speeds .btn { min-width: 44px; padding: 4px 6px; }
     #bottom { flex-wrap: wrap; }
     #tools { flex: 1 0 100%; }
-    #styles, #lights, #palettes { flex: 1 1 auto; }
+    #styles, #lights, #palettes { flex: 1 0 100%; }
+    .bar .rowlabel { flex: 0 0 64px; padding: 0; }
     #styles .btn, #lights .btn, #palettes .btn { flex: 1 1 0; min-width: 0; }
   }
 </style>

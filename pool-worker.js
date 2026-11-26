@@ -30,7 +30,8 @@ self.onmessage = async (e) => {
     if (m.slow) await new Promise((r) => setTimeout(r, m.slow));
     const selected = await selectStyle(m.style || "classic");
     const { msg, transfer, copy } = await runJob(selected, m, makeBitmap);
-    if (copy && store && m.cacheGeneration !== undefined) await store.write(m, copy, m.cacheGeneration);
+    // The copy keeps how long the draw took, so a picture read back on a later visit still counts its worker time (the panel's row).
+    if (copy && store && m.cacheGeneration !== undefined) await store.write(m, { ...copy, ms: msg.ms }, m.cacheGeneration);
     self.postMessage({ ...msg, id: m.id }, transfer);
   }
 };

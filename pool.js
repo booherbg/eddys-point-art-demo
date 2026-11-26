@@ -5,25 +5,25 @@ import { groupKey } from "./core.js";
 import { picture } from "./draw-job.js";
 
 /**
- * How many workers (ruling 6). A phone (a coarse pointer and a short side under 700 CSS px) gets three at most; any
- * other machine gets its cores minus one, at most seven. A core count above that cap is never trusted (a browser that
+ * How many workers (ruling 6): the machine's cores minus one, at most seven, on a phone as on a laptop (Blaine, 2026-11-26:
+ * "Let the phone deal with it"; it was three at most on a phone). A core count above the cap is never trusted (a browser that
  * hides its machine reports a made-up one).
  */
-export function workerCount({ coarse, width, height, cores }) {
+export function workerCount({ cores }) {
   const spare = Math.max(1, (Number.isFinite(cores) ? cores : 1) - 1);
-  return Math.min(isPhone({ coarse, width, height }) ? PHONE_MAX : LAPTOP_MAX, spare);
+  return Math.min(MAX_SUGGESTED, spare);
 }
 
-/** The most workers `workerCount` gives a laptop and a phone. */
-export const LAPTOP_MAX = 7;
-export const PHONE_MAX = 3;
+/** The most workers `workerCount` gives any machine. */
+export const MAX_SUGGESTED = 7;
 /** The Workers panel's range for a count she sets (Task 28): past the core count the workers share cores, and the panel's numbers show it. */
 export const MIN_WORKERS = 1;
 export const MAX_WORKERS = 12;
-/** `workerCount`'s rule as the Workers panel says it (Task 28); built from its two caps, so the sentence and the rule change together. */
-export const WORKER_RULE = `One worker per core, less one for the game, at most ${LAPTOP_MAX} on a laptop and ${PHONE_MAX} on a phone.`;
+/** `workerCount`'s rule as the Workers panel says it (Task 28); built from its cap, so the sentence and the rule change together. */
+export const WORKER_RULE = `One worker per core, less one for the game, at most ${MAX_SUGGESTED}.`;
 
-/** The phone rule (ruling 6): a coarse pointer and a short side under 700 CSS px. The picture cache's cap reads it too (Task 31). */
+/** The phone rule (ruling 6): a coarse pointer and a short side under 700 CSS px. Only the bench reads it now (its frame slice); nothing
+ * that shapes the park's pictures does. */
 export function isPhone({ coarse, width, height }) {
   return !!coarse && Math.min(width, height) < 700;
 }
@@ -35,12 +35,7 @@ export function detectPhone() {
 
 /** The count for this browser. */
 export function detectWorkerCount() {
-  return workerCount({
-    coarse: matchMedia("(pointer: coarse)").matches,
-    width: innerWidth,
-    height: innerHeight,
-    cores: navigator.hardwareConcurrency,
-  });
+  return workerCount({ cores: navigator.hardwareConcurrency });
 }
 
 export class Pool {
@@ -236,6 +231,8 @@ export class Pool {
     if (copy) {
       try {
         hit = await picture(copy, job, (rgba, w, h) => createImageBitmap(new ImageData(rgba, w, h)));
+        // The worker time it took when it was drawn (a copy stored before that was kept counts none).
+        hit.ms = Number.isFinite(copy.ms) ? copy.ms : 0;
       } catch {
         // A bad bundle is a miss. A successful draw will replace it.
       }

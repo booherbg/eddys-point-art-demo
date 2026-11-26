@@ -46,7 +46,7 @@ export class ArtStore {
       const [current, stamp] = await Promise.all([store.read(epochKey(density)), store.read(stampKey(job.family))]);
       if ((current ?? 0) !== generation || (stamp !== undefined && stamp !== key[1])) return false;
       const size = copy.frg.byteLength + (copy.mask?.byteLength ?? 0);
-      await store.write(key, { frg: copy.frg, mask: copy.mask ?? null, density, size });
+      await store.write(key, { frg: copy.frg, mask: copy.mask ?? null, density, size, ...(Number.isFinite(copy.ms) ? { ms: copy.ms } : {}) });
       return true;
     }, false);
   }

@@ -76,3 +76,12 @@ export function heldGroup(doc, parent, labels, onTap) {
     },
   };
 }
+
+/** A held group with its row's word before it (`Style:`, the same form as the Tools tray's `Detail:`): the word, then the buttons. */
+export function labeledGroup(doc, parent, word, labels, onTap) {
+  const label = doc.createElement("span");
+  label.className = "rowlabel";
+  label.textContent = word;
+  parent.append(label);
+  return heldGroup(doc, parent, labels, onTap);
+}

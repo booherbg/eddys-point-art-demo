@@ -13,6 +13,10 @@ export const LIGHTS = ["Day", "Dusk", "Night"];
  * of the three candidates for Blaine's look (live forge Task 22), so all three are on the row until then. */
 export const PALETTES = ["Garden", "Sunset", "Harbor", "Game"];
 export const DEFAULT_PALETTE = "game";
+/** The word before each look row, the same stat-row form as the Tools tray's "Detail:". */
+export const STYLE_ROW = "Style:";
+export const LIGHT_ROW = "Light:";
+export const PALETTE_ROW = "Colors:";
 
 /** A look's pictures have their own cache key; Game keeps the earlier key for today's pictures. */
 export function lookKey(style, light, palette = DEFAULT_PALETTE) {

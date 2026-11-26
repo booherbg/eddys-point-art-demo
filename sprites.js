@@ -7,6 +7,7 @@
 // bottom in `FILL_SECONDS`. Rejected: hiding the tile, a spinner, a grey box, a low-resolution first pass.
 
 import { paint, WORN_CAP } from "./recolor.js";
+import { grade } from "./grade.js";
 import { spriteKey, MAX_STEP } from "./detail.js";
 
 const STYLES = ["classic", "soft", "toybox"];
@@ -98,6 +99,10 @@ export class Sprites {
     if (style === this.style) return;
     this.previousStyle = this.style;
     this.style = style;
+    // The pool drops the queued jobs of a look she leaves, so their reserves end here (b666): left in `claimed` they added up with each
+    // switch until `inflight` filled the cap and no fine picture was asked for. One still drawing lands later and ends nothing twice.
+    const own = `${lookKey(style)}\0`;
+    for (const key of [...this.claimed.keys()]) if (!key.startsWith(own)) this.#unclaim(key);
   }
 
   /** Whether the picture is in memory, at any step. */
@@ -163,6 +168,13 @@ export class Sprites {
     if (est === undefined) return;
     this.claimed.delete(key);
     this.inflight -= est;
+  }
+
+  /** Read-only, for a probe: why `name` at density `d` is or is not in memory (its key, what holds it, the cap's sums). */
+  explain(name, d = 1, style = this.style) {
+    const key = cacheKey(style, name, d);
+    const box = this.boxes[name];
+    return { name, d, held: [...this.mem.values()].filter((e) => e.name === name).map((e) => e.density), claimed: this.claimed.has(key), refused: this.refused.has(key), est: box ? (box[0] + 2) * (box[1] + 2) * d * d * 4 : 0, bytes: this.bytes, inflight: this.inflight, claims: this.claimed.size, cap: this.cap };
   }
 
   /** How many of the fine pictures this frame wanted the cap is holding back. */
@@ -242,6 +254,9 @@ export class Sprites {
         this.bytes -= w.bytes;
       }
     }
+    // The pool cancels what was drawing at this step: a reserve for a picture no one may ask for again ends too (the view asks again,
+    // and reserves again, for what it still wants).
+    for (const key of [...this.claimed.keys()]) if (key.endsWith(`@${detail}`) && detail > 1) this.#unclaim(key);
     this.refused = new Map();
     return gone.size;
   }
@@ -274,6 +289,13 @@ export class Sprites {
       } else if (!this.failedKeys.has(k)) of++;
     }
     return { have, of };
+  }
+
+  /** How many pictures the view wants that are on their way, at any step: not drawn, not failed, not held back by a cap. */
+  waiting() {
+    let n = 0;
+    for (const k of this.touched) if (!this.mem.has(k) && !this.failedKeys.has(k) && !(this.refused.has(k) && !this.claimed.has(k))) n++;
+    return n;
   }
 
   /** What the view's pictures cost: the worker seconds spent and the bytes of bitmaps held, over the keys the view wants and that are in memory. */
@@ -313,8 +335,10 @@ export class Sprites {
       this.worn.set(key, kept);
       return kept.pic;
     }
-    let row = this.rows.get(wear);
-    if (!row) this.rows.set(wear, (row = this.rowOf(wear)));
+    // Her clothes' row is graded for the picture's look too, so a guest wears Sunset's cast like everything round her.
+    const rowKey = `${e.style}|${wear}`;
+    let row = this.rows.get(rowKey);
+    if (!row) this.rows.set(rowKey, (row = grade(Uint8ClampedArray.from(this.rowOf(wear)), e.style)));
     const pic = this.makeWorn(paint(e.rgba, e.codes, row), e.w, e.h);
     if (this.worn.size >= WORN_CAP) {
       const [oldest, w] = this.worn.entries().next().value;

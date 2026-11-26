@@ -43,10 +43,8 @@ export function cacheRows({ hits, misses, sizes }) {
     ...Array.from(totals, ([d, { entries, bytes }]) => `Cache ${d}x: ${entries} ${entries === 1 ? "entry" : "entries"}, ${(bytes / 1_000_000).toFixed(1)} MB`),
   ];
 }
-/** The bar's row while finer pictures are still coming (`have` landed of the `of` this view wants); "" once the last has landed. */
-/** The bar's row: "Drawing: n of m" while pictures are on their way; once none is, and the memory cap holds some below the step (`held`), the sentence that says so (live forge Task 30's ruling). */
-export const HELD_BACK = "Some pictures stay at a lower detail to save memory.";
-export const drawingRow = (have, of, held = 0) => (of > have ? `Drawing: ${have} of ${of}` : held > 0 ? HELD_BACK : "");
+/** The bar's row while pictures are on their way (`have` landed of the `of` this view wants); "" once the last has landed. */
+export const drawingRow = (have, of) => (of > have ? `Drawing: ${have} of ${of}` : "");
 
 /**
  * The real time from a switch (Detail, and the style switch's when it lands) to the last picture it asked for landing, in

@@ -6,15 +6,16 @@
 import { Order } from "./order.js";
 import { artStamps } from "./core.js";
 import { openArtStore } from "./store.js";
-import { Pool, detectWorkerCount, detectPhone } from "./pool.js";
-import { cacheCap } from "./detail.js";
+import { Pool, detectWorkerCount } from "./pool.js";
+import { cacheCap, screenZoom } from "./detail.js";
 import { Sprites } from "./sprites.js";
 import { canvasMaker } from "./recolor.js";
+import { grade, parseLook } from "./grade.js";
 import { fpsRow, prepRows, wasmMemoryRow, jsHeapRow, jsHeapBytes, spriteCacheRow, spritesDrawnRow, spritesCachedRow, onScreenRow, drawingRow, DrawClock } from "./stats.js";
 import { openPark } from "./park.js";
 import { Scene, Camera, wheelStep, parseTable, makeAtlas, GroundAtlases, RECORD } from "./scene.js";
-import { STYLES, LIGHTS, PALETTES, DEFAULT_PALETTE, lookKey, SPEEDS, OPENING, tileAt, diamond, Hands, Prefetch } from "./play.js";
-import { heldGroup, heldButton } from "./bar.js";
+import { STYLES, LIGHTS, PALETTES, DEFAULT_PALETTE, STYLE_ROW, LIGHT_ROW, PALETTE_ROW, lookKey, SPEEDS, OPENING, tileAt, diamond, Hands, Prefetch } from "./play.js";
+import { heldGroup, heldButton, labeledGroup } from "./bar.js";
 import { TOOLS, START, tapTray, tapTool, tapRemove, labelOfTool, isRide, makeBuildBar } from "./trays.js";
 import { makePanel } from "./panel.js";
 import { makeWorkersPanel, snapshot, workerTaps, clearCache } from "./workers.js";
@@ -38,8 +39,9 @@ const ctx = canvas.getContext("2d");
 if (showStats) statsEl.classList.add("on");
 
 const nowS = () => performance.now() / 1000; // seconds since the page opened: the times the overlay shows
-/** The wait from a switch to the last finer picture landing (the panel's "Time to draw"). */
+/** The wait from opening the page, or from a switch (Detail, a look), to the last picture the view wants landing (the panel's "Time to draw"). */
 const clock = new DrawClock();
+clock.start(0);
 
 const [parkBytes, forgeBytes] = await Promise.all(["park.wasm", "forge_worker.wasm"].map(async (f) => (await fetch(f)).arrayBuffer()));
 const [api, forgeModule] = await Promise.all([openPark(parkBytes, Number(q.get("seed") || 0)), WebAssembly.compile(forgeBytes)]);
@@ -50,12 +52,16 @@ let selectedStyle = "classic";
 let selectedLight = "day";
 let selectedPalette = DEFAULT_PALETTE;
 const look = () => lookKey(selectedStyle, selectedLight, selectedPalette);
-// The ground, drawn in code: each density is the same recipe at finer pixels, built on a turn of its own when first needed.
-const atlas = new GroundAtlases({ build: (d, light) => makeAtlas(api.atlas(d, light), (w, h) => Object.assign(document.createElement("canvas"), { width: w, height: h }), d) });
+// The ground, drawn in code: each density is the same recipe at finer pixels, built on a turn of its own when first needed. Its key is
+// the whole look: the park draws it under the look's light, and the look's grade (grade.js) colors it as it colors every sprite.
+const atlas = new GroundAtlases({
+  light: look(),
+  build: (d, key) => makeAtlas(grade(api.atlas(d, parseLook(key).light), key), (w, h) => Object.assign(document.createElement("canvas"), { width: w, height: h }), d),
+});
 
 const order = new Order({ boxes: table.boxes });
-// The picture cache's byte budget (Task 31, b582): 64 MB on a phone (pool.js's phone rule), 256 MB on a laptop, `?cache=<MB>` for another.
-const cap = cacheCap({ phone: detectPhone(), param: q.get("cache") });
+// The picture cache's byte budget (Task 31, b582): none on any device, `?cache=<MB>` for a test of one.
+const cap = cacheCap({ param: q.get("cache") });
 const sprites = new Sprites({ ask: (r) => pool.request(r), boxes: table.boxes, cap, onEvict: (name, d, style) => order.forget(name, d, style), rowOf: (id) => api.wearRow(id), makeWorn: canvasMaker(document) });
 const pool = new Pool({
   module: forgeModule,
@@ -170,28 +176,33 @@ const speedBar = heldGroup(document, document.getElementById("speeds"), SPEEDS.m
   speed = SPEEDS[i][1];
   speedBar.set(i);
 });
-const styleBar = heldGroup(document, document.getElementById("styles"), STYLES, (i) => {
+const styleBar = labeledGroup(document, document.getElementById("styles"), STYLE_ROW, STYLES, (i) => {
   selectedStyle = STYLES[i].toLowerCase();
   const appearance = look();
+  clock.start(nowS());
+  atlas.setLight(appearance);
   sprites.setStyle(appearance);
   pool.setStyle(appearance);
   if (window.__lf) Object.assign(window.__lf, { style: selectedStyle, light: selectedLight, look: appearance });
   styleBar.set(i);
 });
 styleBar.set(0);
-const lightBar = heldGroup(document, document.getElementById("lights"), LIGHTS, (i) => {
+const lightBar = labeledGroup(document, document.getElementById("lights"), LIGHT_ROW, LIGHTS, (i) => {
   selectedLight = LIGHTS[i].toLowerCase();
   const appearance = look();
-  atlas.setLight(selectedLight);
+  clock.start(nowS());
+  atlas.setLight(appearance);
   sprites.setStyle(appearance);
   pool.setStyle(appearance);
   if (window.__lf) Object.assign(window.__lf, { style: selectedStyle, light: selectedLight, look: appearance });
   lightBar.set(i);
 });
 lightBar.set(0);
-const paletteBar = heldGroup(document, document.getElementById("palettes"), PALETTES, (i) => {
+const paletteBar = labeledGroup(document, document.getElementById("palettes"), PALETTE_ROW, PALETTES, (i) => {
   selectedPalette = PALETTES[i].toLowerCase();
   const appearance = look();
+  clock.start(nowS());
+  atlas.setLight(appearance);
   sprites.setStyle(appearance);
   pool.setStyle(appearance);
   if (window.__lf) Object.assign(window.__lf, { style: selectedStyle, light: selectedLight, palette: selectedPalette, look: appearance });
@@ -308,6 +319,8 @@ lf.firstFamilies = () => { const n = {}; for (const name of scene.first ?? []) {
 lf.workersPanel = () => (workersPanel.isOpen ? workersPanel.words() : null);
 // Read-only: the sprites the last frame drew, and how many of them at a step under the Detail row's (stand-ins and sketches).
 lf.cache = () => ({ bytes: sprites.bytes, cap, fineBytes: sprites.fineBytes, held: sprites.mem.size, blocked: sprites.blockedCount() });
+lf.explain = (name, d) => sprites.explain(name, d);
+lf.pool = () => ({ queued: order.waiting(), working: pool.working });
 lf.sharp = () => ({ onScreen: scene.stats.items, below: scene.stats.below, belowNames: scene.stats.belowNames });
 lf.settled = () => pool.settled();
 lf.cost = () => sprites.cost();
@@ -373,15 +386,15 @@ function drawGhost(ctx, view) {
   return v;
 }
 
-/** The bar's "Drawing: 212 of 640" while finer pictures are still coming, cleared when the last lands; stops the Detail clock too. */
+/** The bar's "Drawing: 212 of 640" while finer pictures are still coming, cleared when the last lands; stops the panel's clock too. */
 let shownDrawing = null;
 function showSharpening(t) {
   const { have } = sprites.progress();
-  // The pictures the cap holds back are not on their way: the bar counts only those that are, so it clears when they land.
-  const held = sprites.blockedCount();
-  const of = sprites.progress().of - held;
-  clock.frame(t, of - have);
-  const row = drawingRow(have, of, held);
+  // The pictures a `?cache=` cap holds back are not on their way: the bar counts only those that are, so it clears when they land.
+  const of = sprites.progress().of - sprites.blockedCount();
+  // "Time to draw" waits for every picture the view wants at any step (the first screen's, a look's), not only the finer ones.
+  clock.frame(t, sprites.waiting());
+  const row = drawingRow(have, of);
   if (row === shownDrawing) return;
   drawingEl.textContent = shownDrawing = row;
   drawingEl.classList.toggle("gone", !row);
@@ -428,7 +441,7 @@ function loop() {
   ctx.setTransform(s, 0, 0, s, -view.x * s, -view.y * s);
   ctx.imageSmoothingEnabled = false;
   const t = nowS();
-  scene.frame(ctx, view, t, { zoom: camera.zoom, detail });
+  scene.frame(ctx, view, t, { zoom: screenZoom(camera.zoom, devicePixelRatio), detail });
   showSharpening(t);
   workersPanel.frame(t);
   if (tray.open === TOOLS && t - panelAt > 0.25) {

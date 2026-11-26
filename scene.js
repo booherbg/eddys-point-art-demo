@@ -281,7 +281,7 @@ export class GroundAtlases {
     this.pending = new Set();
   }
 
-  /** Switch the code-drawn ground with the held forge light; the base atlas is small enough to make immediately. */
+  /** Switch the code-drawn ground to the held look (its key: the page passes the whole look, light and grade); the base atlas is small enough to make immediately. */
   setLight(light) {
     if (light === this.light) return;
     this.light = light;
