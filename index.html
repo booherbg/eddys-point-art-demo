@@ -10,16 +10,17 @@
   canvas.drag { cursor: grabbing; }
   .bar { position: fixed; left: 0; right: 0; box-sizing: border-box; display: flex; gap: 4px; padding: 6px max(8px, env(safe-area-inset-left));
          background: #2a1c3e; color: #f4efe6; font: 600 13px/1.1 ui-monospace, Menlo, monospace; user-select: none; -webkit-user-select: none; }
-  #top { top: 0; align-items: center; justify-content: space-between; height: 44px; border-bottom: 2px solid #14101c; }
+  #top { top: 0; align-items: center; justify-content: space-between; min-height: 44px; height: auto; border-bottom: 2px solid #14101c; }
   #bottom { bottom: 0; padding-bottom: max(6px, env(safe-area-inset-bottom)); border-top: 2px solid #14101c; }
   .rows { display: flex; gap: 14px; white-space: nowrap; }
     .group { display: flex; gap: 4px; }
   .gone { display: none !important; }
   #tools { flex: 1; }
   #styles, #lights, #palettes { flex: 0 0 auto; align-items: center; }
+  :root { --bottom-h: 58px; --top-h: 48px; } /* the bottom bar's real height, set by main.js, so the tray always sits on it */
   .bar .rowlabel { flex: 0 0 auto; padding: 0 2px 0 6px; white-space: nowrap; }
   #styles .btn, #lights .btn, #palettes .btn { flex: 0 0 auto; min-width: 60px; padding: 4px 6px; }
-  #tray { bottom: 58px; border-top: 2px solid #14101c; border-bottom: 0; }
+  #tray { bottom: var(--bottom-h); border-top: 2px solid #14101c; border-bottom: 0; }
   #tray .btn { flex: 0 1 auto; min-width: 92px; min-height: 36px; flex-direction: row; gap: 6px; padding: 4px 10px; }
   #tray .btn.once { margin-left: 12px; }
   #topright { align-items: center; }
@@ -35,13 +36,15 @@
   .btn.switch.on { border-color: #5fd068; }
   .btn.switch.on .lamp { background: #5fd068; box-shadow: 0 0 6px #5fd068; }
   .label { display: block; }
-  #panel { position: fixed; right: 8px; top: 52px; box-sizing: border-box; max-width: calc(100vw - 16px); padding: 8px; display: flex; flex-direction: column; gap: 6px;
+  #panel, #looks { position: fixed; right: 8px; top: calc(var(--top-h) + 6px); box-sizing: border-box; max-width: calc(100vw - 16px); padding: 8px; display: flex; flex-direction: column; gap: 6px;
            background: #2a1c3e; color: #f4efe6; border: 2px solid #14101c; border-radius: 4px; font: 600 13px/1.1 ui-monospace, Menlo, monospace; }
+  #looks .group { align-items: center; }
   #panel .row { display: flex; align-items: center; gap: 8px; }
+  #looks .btn { flex: 0 0 auto; min-width: 60px; min-height: 32px; padding: 4px 8px; }
   #panel .btn { flex: 0 0 auto; min-width: 44px; min-height: 32px; flex-direction: row; gap: 5px; padding: 4px 8px; }
   #panel .actions { gap: 6px; flex-wrap: wrap; }
   #panel .stat { white-space: nowrap; }
-  .wpanel { position: fixed; z-index: 6; left: 8px; top: 52px; box-sizing: border-box; width: 292px; max-width: calc(100vw - 16px); max-height: calc(100vh - 130px); overflow-y: auto;
+  .wpanel { position: fixed; z-index: 6; left: 8px; top: calc(var(--top-h) + 6px); box-sizing: border-box; width: 292px; max-width: calc(100vw - 16px); max-height: calc(100vh - 130px); overflow-y: auto;
             padding: 8px; display: flex; flex-direction: column; gap: 5px; background: #2a1c3e; color: #f4efe6; border: 2px solid #14101c; border-radius: 4px;
             font: 600 13px/1.15 ui-monospace, Menlo, monospace; }
   .wpanel .row { display: flex; align-items: center; gap: 6px; }
@@ -56,13 +59,13 @@
   .wrow .wbar { flex: 0 0 64px; }
   .wbar { height: 5px; background: #14101c; border-radius: 2px; overflow: hidden; }
   .wfill { height: 100%; width: 0; background: #5fd068; }
-  #tip { position: fixed; z-index: 5; left: 50%; transform: translateX(-50%); bottom: 82px; max-width: calc(100vw - 32px); box-sizing: border-box; padding: 6px 12px;
+  #tip { position: fixed; z-index: 5; left: 50%; transform: translateX(-50%); bottom: calc(var(--bottom-h) + 24px); max-width: calc(100vw - 32px); box-sizing: border-box; padding: 6px 12px;
          background: #f4efe6; color: #2a1c3e; border: 2px solid #2a1c3e; border-radius: 4px; font: 600 14px/1.3 ui-monospace, Menlo, monospace;
          text-align: center; pointer-events: none; }
-  body.tray-open #tip { bottom: 128px; }
+  body.tray-open #tip { bottom: calc(var(--bottom-h) + 70px); }
   #tip.no { background: #f6d9d6; border-color: #8c2a2a; color: #5c1414; }
   #tip.gone { display: none; }
-  #line { position: fixed; left: 50%; top: 58px; transform: translateX(-50%); max-width: calc(100vw - 32px); box-sizing: border-box;
+  #line { position: fixed; left: 50%; top: calc(var(--top-h) + 12px); transform: translateX(-50%); max-width: calc(100vw - 32px); box-sizing: border-box;
           padding: 8px 14px; background: #f4efe6; color: #2a1c3e; border: 2px solid #2a1c3e; border-radius: 4px;
           font: 600 15px/1.35 ui-monospace, Menlo, monospace; text-align: center; pointer-events: none; }
   #line.gone { display: none; }
@@ -77,13 +80,12 @@
   @media (max-width: 600px) {
     .bar { font-size: 12px; }
     .rows { gap: 10px; }
-    #top .rows { flex-direction: column; gap: 1px; }
-    #speeds .btn { min-width: 44px; padding: 4px 6px; }
-    #bottom { flex-wrap: wrap; }
-    #tools { flex: 1 0 100%; }
-    #styles, #lights, #palettes { flex: 1 0 100%; }
-    .bar .rowlabel { flex: 0 0 64px; padding: 0; }
-    #styles .btn, #lights .btn, #palettes .btn { flex: 1 1 0; min-width: 0; }
+    #top { flex-direction: column; align-items: stretch; gap: 4px; }
+    #topright { justify-content: space-between; gap: 4px; }
+    #topright > .btn, #speeds .btn { flex: 1 1 0; min-width: 0; }
+    #speeds { flex: 3 1 0; }
+    #looks .rowlabel { flex: 0 0 56px; padding: 0; }
+    #looks .btn { min-width: 0; padding: 4px 6px; }
   }
 </style>
 </head>
@@ -94,7 +96,8 @@
 <div id="tip" class="gone"></div>
 <div id="tray" class="bar gone"></div>
 <div id="panel" class="gone"></div>
-<div id="bottom" class="bar"><div id="tools" class="group"></div><div id="styles" class="group"></div><div id="lights" class="group"></div><div id="palettes" class="group"></div></div>
+<div id="looks" class="gone"><div id="styles" class="group"></div><div id="lights" class="group"></div><div id="palettes" class="group"></div></div>
+<div id="bottom" class="bar"><div id="tools" class="group"></div></div>
 <pre id="stats"></pre>
 <script type="module" src="main.js"></script>
 </body>

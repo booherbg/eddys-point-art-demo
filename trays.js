@@ -20,6 +20,8 @@ export const REMOVE = "Remove";
 export const REMOVE_TOOL = 5;
 /** The top bar's tray: Detail and the once-buttons (the Workers panel's button joins it in Task 28). */
 export const TOOLS = "Tools";
+/** The Looks button beside Tools (Style, Light, Colors): a tray of switches, one open at a time like the rest. */
+export const LOOKS = "Looks";
 /** The buttons along the build bar, in order. */
 export const BUILD_BAR = [...TRAYS.map((t) => t.name), REMOVE];
 /** The once button that turns what she is about to place, a quarter at a time (the R key does the same); it stands in the Rides tray. */

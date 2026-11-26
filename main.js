@@ -1,6 +1,6 @@
 // The live forge's park (plan 2026-11-18-live-forge, Task 3): the sim running in the page at 60 steps a second, its draw list
 // from `park.wasm`, every sprite drawn the first time it is seen by the worker pool (Task 2), the ground drawn in code.
-// The camera is hers: it moves only when she drags, or zooms (the wheel, the keys 1 to 5, plus and minus, a double tap with no tool
+// The camera is hers: it moves only when she drags, or zooms (the wheel, the keys 1 to 5, plus and minus, a double tap with no tool, or a two-finger pinch
 // held); a build never moves it, and neither does the Detail row (Task 18: it changes how pictures are drawn, never the view). Task 4 adds the play: the build bar (Task 26: trays, a held tool inside one), the ghost with its price or the sim's refusal, the tap,
 // the speeds, and the two stat rows. Parameters: `noprefetch` (do not ask for the bar's pictures: E3 without them), `stats` (the dev overlay), `zoom` (1 to 5), `seed`, `workers`, `slow` (ms each job waits).
 import { Order } from "./order.js";
@@ -16,7 +16,7 @@ import { openPark } from "./park.js";
 import { Scene, Camera, wheelStep, parseTable, makeAtlas, GroundAtlases, RECORD } from "./scene.js";
 import { STYLES, LIGHTS, PALETTES, DEFAULT_PALETTE, STYLE_ROW, LIGHT_ROW, PALETTE_ROW, lookKey, SPEEDS, OPENING, tileAt, diamond, Hands, Prefetch } from "./play.js";
 import { heldGroup, heldButton, labeledGroup } from "./bar.js";
-import { TOOLS, START, tapTray, tapTool, tapRemove, labelOfTool, isRide, makeBuildBar } from "./trays.js";
+import { TOOLS, LOOKS, START, tapTray, tapTool, tapRemove, labelOfTool, isRide, makeBuildBar } from "./trays.js";
 import { makePanel } from "./panel.js";
 import { makeWorkersPanel, snapshot, workerTaps, clearCache } from "./workers.js";
 
@@ -93,7 +93,6 @@ addEventListener("resize", resize);
 
 // ---- her hands: a held tool taps to build; a slide of more than 8 px pans; the wheel or a double tap zooms ----
 const hands = new Hands();
-let tapAt = 0;
 /** What the tip line shows after a tap: the sim's words for a moment (a refusal, or what the build cost). */
 let flash = null;
 const dprNow = () => canvas.width / innerWidth;
@@ -106,15 +105,17 @@ function press(e) {
 }
 addEventListener("pointerdown", () => line.classList.add("gone"), { capture: true });
 canvas.addEventListener("pointerdown", (e) => {
-  hands.down(press(e));
+  const r = hands.down({ ...press(e), t: performance.now() });
   canvas.setPointerCapture(e.pointerId);
-  const t = performance.now();
-  if (hands.tool === null && t - tapAt < 320) camera.cycle();
-  tapAt = t;
+  if (r?.double) camera.cycle();
 });
 canvas.addEventListener("pointermove", (e) => {
   const m = hands.move(press(e));
   if (!m) return;
+  if (m.zoom) {
+    camera.zoomBy(m.zoom); // a pinch steps, and stops at the ends
+    return;
+  }
   camera.drag(m.pan[0] * dprNow(), m.pan[1] * dprNow(), scale());
   canvas.classList.add("drag");
 });
@@ -153,7 +154,10 @@ function sync() {
   toolsButton.classList.toggle("on", tray.open === TOOLS);
   toolsButton.setAttribute("aria-pressed", tray.open === TOOLS ? "true" : "false");
   panelEl.classList.toggle("gone", tray.open !== TOOLS);
-  document.body.classList.toggle("tray-open", tray.open !== null && tray.open !== TOOLS); // the price line stands above the tray, never behind it
+  looksButton.classList.toggle("on", tray.open === LOOKS);
+  looksButton.setAttribute("aria-pressed", tray.open === LOOKS ? "true" : "false");
+  document.getElementById("looks").classList.toggle("gone", tray.open !== LOOKS);
+  document.body.classList.toggle("tray-open", tray.open !== null && tray.open !== TOOLS && tray.open !== LOOKS); // the price line stands above the tray, never behind it
   flash = null;
 }
 const buildBar = makeBuildBar(document, document.getElementById("tools"), trayEl, {
@@ -272,7 +276,19 @@ function shutWorkers() {
   panel.setWorkers(false);
 }
 const toolsButton = heldButton(document, TOOLS, () => ((tray = tapTray(tray, TOOLS)), sync()));
-document.getElementById("topright").append(toolsButton);
+const looksButton = heldButton(document, LOOKS, () => ((tray = tapTray(tray, LOOKS)), sync()));
+document.getElementById("topright").append(looksButton, toolsButton);
+// The tray sits on the bottom bar's real height, whatever it grows to (never a fixed 58 px).
+const bottomBar = document.getElementById("bottom");
+const fitBottom = () => document.documentElement.style.setProperty("--bottom-h", `${bottomBar.offsetHeight}px`);
+const topBar = document.getElementById("top");
+const fitBars = () => {
+  fitBottom();
+  document.documentElement.style.setProperty("--top-h", `${topBar.offsetHeight}px`);
+};
+new ResizeObserver(fitBars).observe(bottomBar);
+new ResizeObserver(fitBars).observe(topBar);
+fitBars();
 sync();
 
 // ---- the dev overlay's numbers: E3 (times) and E5 (frame time while drawing) ----

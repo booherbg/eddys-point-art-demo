@@ -67,6 +67,12 @@ export class Hands {
     /** The tile the ghost is on, `{x, y}`, or null. */
     this.cursor = null;
     this.pressed = null;
+    /** Every finger down now, by pointer id: `{sx, sy}`. */
+    this.fingers = new Map();
+    /** Two fingers down: `{ids, base}` where `base` is the distance the last zoom step was taken at. */
+    this.pinch = null;
+    /** The last lone press, for the double tap: `{t, sx, sy}`. */
+    this.lastTap = null;
   }
 
   hold(i) {
@@ -79,14 +85,59 @@ export class Hands {
     this.turn = (this.turn + 1) % 4;
   }
 
-  /** A press: `p` = `{id, sx, sy, tile, touch}` (screen pixels, the tile under it). */
+  /**
+   * A press: `p` = `{id, sx, sy, tile, touch, t}` (screen pixels, the tile under it, the time in ms). Returns `{double: true}`
+   * for a double tap: a second lone press within 320 ms and 30 px of the first, with no tool held. A second finger landing is
+   * never one: it starts a pinch and drops the first finger's press, so nothing pans or builds.
+   */
   down(p) {
+    this.fingers.set(p.id, { sx: p.sx, sy: p.sy });
+    if (this.fingers.size >= 2) {
+      this.lastTap = null;
+      this.pressed = null;
+      this.cursor = null;
+      if (!this.pinch) {
+        const ids = [...this.fingers.keys()].slice(0, 2);
+        this.pinch = { ids, base: this.gap(ids) };
+      }
+      return null;
+    }
+    let double = false;
+    const last = this.lastTap;
+    if (this.tool === null && typeof p.t === "number" && last && p.t - last.t < 320 && Math.hypot(p.sx - last.sx, p.sy - last.sy) < 30) {
+      double = true;
+      this.lastTap = null;
+    } else {
+      this.lastTap = typeof p.t === "number" ? { t: p.t, sx: p.sx, sy: p.sy } : null;
+    }
     this.pressed = { id: p.id, sx: p.sx, sy: p.sy, px: p.sx, py: p.sy, moved: false, touch: !!p.touch };
     if (this.tool !== null) this.cursor = p.tile;
+    return double ? { double: true } : null;
   }
 
-  /** A move. Returns `{pan: [dx, dy]}` in screen pixels while a press is sliding, else null. */
+  gap(ids) {
+    const [a, b] = ids.map((i) => this.fingers.get(i));
+    return Math.max(1, Math.hypot(a.sx - b.sx, a.sy - b.sy));
+  }
+
+  /**
+   * A move. Returns `{pan: [dx, dy]}` in screen pixels while a press is sliding, `{zoom: n}` (whole steps, signed) while two
+   * fingers pinch (a step each time the gap grows or shrinks by 1.25 from the last), else null.
+   */
   move(p) {
+    const f = this.fingers.get(p.id);
+    if (f) {
+      f.sx = p.sx;
+      f.sy = p.sy;
+    }
+    if (this.pinch) {
+      if (!this.pinch.ids.includes(p.id)) return null;
+      const g = this.gap(this.pinch.ids);
+      let n = 0;
+      while (g >= this.pinch.base * 1.25) { this.pinch.base *= 1.25; n++; }
+      while (g <= this.pinch.base / 1.25) { this.pinch.base /= 1.25; n--; }
+      return n ? { zoom: n } : null;
+    }
     const d = this.pressed;
     if (!d) {
       if (!p.touch && this.tool !== null) this.cursor = p.tile;
@@ -114,6 +165,11 @@ export class Hands {
    * does nothing: Blaine, 2026-11-18, a status card on a tap "just gets in the way").
    */
   up(p) {
+    this.fingers.delete(p.id);
+    if (this.pinch) {
+      if (this.fingers.size < 2) this.pinch = null; // the one left does not pan or build until it lifts and presses again
+      return null;
+    }
     const d = this.pressed;
     if (!d || p.id !== d.id) return null;
     this.pressed = null;
@@ -125,6 +181,8 @@ export class Hands {
 
   /** The pointer left the page. */
   leave() {
+    this.fingers.clear();
+    this.pinch = null;
     this.pressed = null;
     this.cursor = null;
   }
