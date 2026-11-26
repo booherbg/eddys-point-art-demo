@@ -14,7 +14,7 @@ import { grade, parseLook } from "./grade.js";
 import { fpsRow, prepRows, wasmMemoryRow, jsHeapRow, jsHeapBytes, spriteCacheRow, spritesDrawnRow, spritesCachedRow, onScreenRow, queueRow, tickSegments, tickFilled, Backlog, DrawClock } from "./stats.js";
 import { openPark } from "./park.js";
 import { Scene, Camera, wheelStep, parseTable, makeAtlas, GroundAtlases, RECORD } from "./scene.js";
-import { STYLES, LIGHTS, PALETTES, DEFAULT_PALETTE, STYLE_ROW, LIGHT_ROW, PALETTE_ROW, lookKey, SPEEDS, OPENING, tileAt, diamond, Hands, Prefetch } from "./play.js";
+import { STYLES, LIGHTS, PALETTES, DEFAULT_PALETTE, STYLE_ROW, LIGHT_ROW, PALETTE_ROW, lookKey, SPEEDS, OPENING, tileAt, diamond, Hands, Prefetch, inMarkers, inPulse, IN_GREEN, IN_CASING } from "./play.js";
 import { heldGroup, heldButton, labeledGroup } from "./bar.js";
 import { TOOLS, LOOKS, ABOUT, START, tapTray, tapTool, tapRemove, labelOfTool, isRide, makeBuildBar } from "./trays.js";
 import { fillAbout } from "./about.js";
@@ -412,6 +412,48 @@ function drawGhost(ctx, view) {
   return v;
 }
 
+/**
+ * The In marker, while Ride queue is held: a green outline on each ride's In tile, breathing, with a ring that spreads off it
+ * (the In hut's green). Drawn in the overlay with the ghost; it never moves the view.
+ */
+function drawInMarks(ctx, t) {
+  if (hands.tool === null) return;
+  const tiles = inMarkers(hands.tool, api.inTiles());
+  if (!tiles.length) return;
+  const { ring, glow } = inPulse(t);
+  ctx.save();
+  ctx.lineJoin = "round";
+  for (const { x, y } of tiles) {
+    const c = diamond(x, y);
+    const path = (k) => {
+      const m = [(c[0][0] + c[2][0]) / 2, (c[1][1] + c[3][1]) / 2];
+      ctx.beginPath();
+      c.forEach(([px, py], i) => {
+        const qx = m[0] + (px - m[0]) * k, qy = m[1] + (py - m[1]) * k;
+        i ? ctx.lineTo(qx, qy) : ctx.moveTo(qx, qy);
+      });
+      ctx.closePath();
+    };
+    const stroke = (k, alpha, w) => {
+      path(k);
+      ctx.globalAlpha = alpha;
+      ctx.lineWidth = w + 3; // a dark casing, so the green reads on green grass
+      ctx.strokeStyle = IN_CASING;
+      ctx.stroke();
+      ctx.lineWidth = w;
+      ctx.strokeStyle = IN_GREEN;
+      ctx.stroke();
+    };
+    path(1);
+    ctx.globalAlpha = 0.18 + 0.2 * glow;
+    ctx.fillStyle = IN_GREEN;
+    ctx.fill();
+    stroke(1, 0.75 + 0.25 * glow, 4);
+    stroke(1 + 0.7 * ring, 0.9 * (1 - ring), 3);
+  }
+  ctx.restore();
+}
+
 /** The panel's clock: "Time to draw" waits for every picture the view wants at any step (the first screen's, a look's). */
 function showSharpening(t) {
   clock.frame(t, sprites.waiting());
@@ -507,6 +549,7 @@ function loop() {
     panelAt = t;
     panel.setStats({ ...sprites.cost(), wait: clock.seconds(t), busy: pool.working, total: pool.size });
   }
+  drawInMarks(ctx, t);
   const verdict = drawGhost(ctx, view);
   showRows(verdict);
   if (scene.firstDoneAt !== null && !q.has("noprefetch")) for (const r of prefetch.take(true, view)) pool.request(r);

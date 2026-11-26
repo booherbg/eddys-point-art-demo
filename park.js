@@ -52,6 +52,13 @@ export async function openPark(source, seed = 0) {
       const p = x.lf_ghost(tool, tx, ty, turn, v.x, v.y, v.w, v.h);
       return new Int32Array(x.memory.buffer, p, x.lf_len() * 12).slice();
     },
+    /** The tile each ride's In hut stands on, `{x, y}` for every ride (where a queue can start): the Ride queue tool marks them. */
+    inTiles() {
+      const p = x.lf_in_tiles();
+      const n = x.lf_in_len();
+      const a = new Int32Array(x.memory.buffer, p, n * 2).slice();
+      return Array.from({ length: n }, (_, i) => ({ x: a[i * 2], y: a[i * 2 + 1] }));
+    },
     /** Sends `n` guests up the road to the gate (`Park::send_guests`); how many set out. */
     sendGuests: (n) => x.lf_send_guests(n),
     /** The stat rows, "Money: $1,000" and "Guests: 12". */

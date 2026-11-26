@@ -46,6 +46,33 @@ export function tileCenter(x, y) {
   return { x: 32 * (x - y), y: 16 * (x + y) };
 }
 
+/** The Ride queue tool's number (`Tool::Queue`, the last of `Tool::ALL`): the one that makes every In show. */
+export const QUEUE_TOOL = 9;
+/** The In hut's green (the forge's entrance hut is the green one, the exit the red), as the marker's outline. */
+export const IN_GREEN = "#3fd45e";
+/** The dark casing under the outline: green on the park's grass needs it to read. */
+export const IN_CASING = "#0f3a1c";
+/** The seconds one pulse of an In marker takes. */
+export const IN_PULSE_S = 1.4;
+
+/**
+ * The In tiles to mark while tool `tool` is held (Blaine, 2026-11-26: "I can only add a queue on the entrance but it's not clear
+ * where the entrance is"): all of them with Ride queue held, none with any other tool or none. Only an overlay: it never moves
+ * the view, and a tap on the map still builds as before.
+ */
+export function inMarkers(tool, tiles) {
+  return tool === QUEUE_TOOL ? tiles : [];
+}
+
+/**
+ * One frame of the marker at time `t` (seconds): `ring` 0 to 1 is how far the ring has spread (it starts on the tile's edge and
+ * fades out as it grows), `glow` 0 to 1 breathes the outline and its fill. It repeats every `IN_PULSE_S`.
+ */
+export function inPulse(t) {
+  const ring = (((t / IN_PULSE_S) % 1) + 1) % 1;
+  return { ring, glow: 0.5 - 0.5 * Math.cos(ring * 2 * Math.PI) };
+}
+
 /** The four corners of a tile's diamond in art pixels, top, right, bottom, left. */
 export function diamond(x, y) {
   const c = tileCenter(x, y);
