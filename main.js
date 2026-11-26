@@ -11,12 +11,13 @@ import { cacheCap, screenZoom } from "./detail.js";
 import { Sprites } from "./sprites.js";
 import { canvasMaker } from "./recolor.js";
 import { grade, parseLook } from "./grade.js";
-import { fpsRow, prepRows, wasmMemoryRow, jsHeapRow, jsHeapBytes, spriteCacheRow, spritesDrawnRow, spritesCachedRow, onScreenRow, drawingRow, DrawClock } from "./stats.js";
+import { fpsRow, prepRows, wasmMemoryRow, jsHeapRow, jsHeapBytes, spriteCacheRow, spritesDrawnRow, spritesCachedRow, onScreenRow, queueRow, tickSegments, tickFilled, Backlog, DrawClock } from "./stats.js";
 import { openPark } from "./park.js";
 import { Scene, Camera, wheelStep, parseTable, makeAtlas, GroundAtlases, RECORD } from "./scene.js";
 import { STYLES, LIGHTS, PALETTES, DEFAULT_PALETTE, STYLE_ROW, LIGHT_ROW, PALETTE_ROW, lookKey, SPEEDS, OPENING, tileAt, diamond, Hands, Prefetch } from "./play.js";
 import { heldGroup, heldButton, labeledGroup } from "./bar.js";
-import { TOOLS, LOOKS, START, tapTray, tapTool, tapRemove, labelOfTool, isRide, makeBuildBar } from "./trays.js";
+import { TOOLS, LOOKS, ABOUT, START, tapTray, tapTool, tapRemove, labelOfTool, isRide, makeBuildBar } from "./trays.js";
+import { fillAbout } from "./about.js";
 import { makePanel } from "./panel.js";
 import { makeWorkersPanel, snapshot, workerTaps, clearCache } from "./workers.js";
 
@@ -34,7 +35,8 @@ const tip = document.getElementById("tip");
 const moneyEl = document.getElementById("money");
 const guestsEl = document.getElementById("guests");
 const statsEl = document.getElementById("stats");
-const drawingEl = document.getElementById("drawing");
+const loadEl = document.createElement("span");
+loadEl.id = "load";
 const ctx = canvas.getContext("2d");
 if (showStats) statsEl.classList.add("on");
 
@@ -157,7 +159,10 @@ function sync() {
   looksButton.classList.toggle("on", tray.open === LOOKS);
   looksButton.setAttribute("aria-pressed", tray.open === LOOKS ? "true" : "false");
   document.getElementById("looks").classList.toggle("gone", tray.open !== LOOKS);
-  document.body.classList.toggle("tray-open", tray.open !== null && tray.open !== TOOLS && tray.open !== LOOKS); // the price line stands above the tray, never behind it
+  aboutButton.classList.toggle("on", tray.open === ABOUT);
+  aboutButton.setAttribute("aria-pressed", tray.open === ABOUT ? "true" : "false");
+  document.getElementById("about").classList.toggle("gone", tray.open !== ABOUT);
+  document.body.classList.toggle("tray-open", tray.open !== null && tray.open !== TOOLS && tray.open !== LOOKS && tray.open !== ABOUT); // the price line stands above the tray, never behind it
   flash = null;
 }
 const buildBar = makeBuildBar(document, document.getElementById("tools"), trayEl, {
@@ -232,7 +237,7 @@ addEventListener("keydown", (e) => {
 // Add 10 guests acts once: the ten appear at the road's far end and walk up to the gate ----
 const panelEl = document.getElementById("panel");
 const panel = makePanel(document, panelEl, {
-  onDetail: (step) => (detail = step, panel.setDetail(detail), clock.start(nowS())),
+  onDetail: (step) => (detail = step, pool.setDetail(step), panel.setDetail(detail), clock.start(nowS())),
   onAddGuests: () => console.log(`lf-sent ${api.sendGuests(10)}`),
   onWorkers: () => (workersPanel.isOpen ? shutWorkers() : openWorkers()),
 });
@@ -277,7 +282,11 @@ function shutWorkers() {
 }
 const toolsButton = heldButton(document, TOOLS, () => ((tray = tapTray(tray, TOOLS)), sync()));
 const looksButton = heldButton(document, LOOKS, () => ((tray = tapTray(tray, LOOKS)), sync()));
-document.getElementById("topright").append(looksButton, toolsButton);
+const aboutButton = heldButton(document, ABOUT, () => ((tray = tapTray(tray, ABOUT)), sync()));
+aboutButton.classList.add("about");
+aboutButton.setAttribute("aria-label", "About");
+fillAbout(document, document.getElementById("about"));
+document.getElementById("topright").append(loadEl, looksButton, toolsButton, aboutButton); // Queue: N sits beside the buttons, not in one
 // The tray sits on the bottom bar's real height, whatever it grows to (never a fixed 58 px).
 const bottomBar = document.getElementById("bottom");
 const fitBottom = () => document.documentElement.style.setProperty("--bottom-h", `${bottomBar.offsetHeight}px`);
@@ -340,7 +349,8 @@ lf.pool = () => ({ queued: order.waiting(), working: pool.working });
 lf.sharp = () => ({ onScreen: scene.stats.items, below: scene.stats.below, belowNames: scene.stats.belowNames });
 lf.settled = () => pool.settled();
 lf.cost = () => sprites.cost();
-lf.bar = () => drawingEl.textContent;
+// "busy" while pictures the view wants are still on their way, "" once the last has landed (the shot scripts wait on it).
+lf.bar = () => (sprites.progress().of - sprites.blockedCount() > sprites.progress().have ? "busy" : "");
 lf.clock = () => clock.seconds(nowS());
 lf.panel = () => [...panelEl.querySelectorAll(".rowlabel, .btn, .stat")].map((e) => e.textContent);
 const mean = (a) => (a.length ? a.reduce((s, v) => s + v, 0) / a.length : 0);
@@ -402,26 +412,58 @@ function drawGhost(ctx, view) {
   return v;
 }
 
-/** The bar's "Drawing: 212 of 640" while finer pictures are still coming, cleared when the last lands; stops the panel's clock too. */
-let shownDrawing = null;
+/** The panel's clock: "Time to draw" waits for every picture the view wants at any step (the first screen's, a look's). */
 function showSharpening(t) {
-  const { have } = sprites.progress();
-  // The pictures a `?cache=` cap holds back are not on their way: the bar counts only those that are, so it clears when they land.
-  const of = sprites.progress().of - sprites.blockedCount();
-  // "Time to draw" waits for every picture the view wants at any step (the first screen's, a look's), not only the finer ones.
   clock.frame(t, sprites.waiting());
-  const row = drawingRow(have, of);
-  if (row === shownDrawing) return;
-  drawingEl.textContent = shownDrawing = row;
-  drawingEl.classList.toggle("gone", !row);
+}
+
+// ---- the two bars under the top bar's text, both from the pool's own counts: a segment for every finished job (flashing when
+// the fill is full), and the backlog's share of its peak ----
+const tickEl = document.getElementById("tick");
+const backlogFill = document.querySelector("#backlog i");
+for (let i = 0; i < 20; i++) tickEl.append(document.createElement("b"));
+const tickCells = [...tickEl.children];
+const backlog = new Backlog();
+let lastFinished = 0;
+let batchPeak = 0; // the most queued in the latest batch, kept after it drains so the fill keeps its size
+let wasEmpty = true;
+let flashUntil = 0;
+let shownTick = "";
+let shownBacklog = -1;
+function showBars(nowMs) {
+  const width = backlog.read(pool.waiting);
+  if (pool.waiting > 0) {
+    if (wasEmpty) batchPeak = 0;
+    batchPeak = Math.max(batchPeak, backlog.peak);
+    wasEmpty = false;
+  } else wasEmpty = true;
+  const segs = tickSegments(batchPeak || 20);
+  const done = pool.finished;
+  // A fill that has just filled flashes once, then starts again.
+  if (done > lastFinished && done % segs === 0) flashUntil = nowMs + 150;
+  lastFinished = done;
+  const lit = nowMs < flashUntil ? segs : tickFilled(done, segs);
+  const key = `${segs}:${lit}:${nowMs < flashUntil}`;
+  if (key !== shownTick) {
+    shownTick = key;
+    tickCells.forEach((c, i) => {
+      c.style.display = i < segs ? "" : "none";
+      c.classList.toggle("on", i < lit);
+    });
+    tickEl.classList.toggle("flash", nowMs < flashUntil);
+  }
+  if (width !== shownBacklog) backlogFill.style.width = `${width * 100}%`, shownBacklog = width;
 }
 
 let shownMoney = "";
 let shownGuests = "";
+let shownQueue = "";
 function showRows(verdict) {
   const m = api.moneyRow(), g = api.guestsRow();
   if (m !== shownMoney) moneyEl.textContent = shownMoney = m;
   if (g !== shownGuests) guestsEl.textContent = shownGuests = g;
+  const l = queueRow(pool.waiting);
+  if (l !== shownQueue) loadEl.textContent = shownQueue = l;
   let words = "";
   if (verdict) words = verdict.line;
   else if (flash && performance.now() < flash.until) words = flash.line;
@@ -459,10 +501,11 @@ function loop() {
   const t = nowS();
   scene.frame(ctx, view, t, { zoom: screenZoom(camera.zoom, devicePixelRatio), detail });
   showSharpening(t);
+  showBars(performance.now());
   workersPanel.frame(t);
   if (tray.open === TOOLS && t - panelAt > 0.25) {
     panelAt = t;
-    panel.setStats({ ...sprites.cost(), wait: clock.seconds(t) });
+    panel.setStats({ ...sprites.cost(), wait: clock.seconds(t), busy: pool.working, total: pool.size });
   }
   const verdict = drawGhost(ctx, view);
   showRows(verdict);

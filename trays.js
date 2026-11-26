@@ -22,6 +22,8 @@ export const REMOVE_TOOL = 5;
 export const TOOLS = "Tools";
 /** The Looks button beside Tools (Style, Light, Colors): a tray of switches, one open at a time like the rest. */
 export const LOOKS = "Looks";
+/** The About button beside them: a short technical note about the demo, opened like the other panels. */
+export const ABOUT = "About";
 /** The buttons along the build bar, in order. */
 export const BUILD_BAR = [...TRAYS.map((t) => t.name), REMOVE];
 /** The once button that turns what she is about to place, a quarter at a time (the R key does the same); it stands in the Rides tray. */

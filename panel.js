@@ -4,6 +4,7 @@
 // it (held while open, one tray at a time).
 import { heldGroup, heldButton, onceButton } from "./bar.js";
 import { ADD_TEN } from "./play.js";
+import { workersRow } from "./stats.js";
 import { WORKERS } from "./workers.js";
 import { DETAIL_LABELS, DETAIL_ROW, STEPS, timeToDrawRow, workerTimeRow, picturesRow } from "./detail.js";
 
@@ -24,6 +25,9 @@ export function makePanel(doc, parent, { onDetail, onAddGuests = () => {}, onWor
   const time = doc.createElement("div");
   time.className = "stat";
   time.textContent = workerTimeRow(0);
+  const busy = doc.createElement("div");
+  busy.className = "stat";
+  busy.textContent = workersRow(0, 0);
   const pictures = doc.createElement("div");
   pictures.className = "stat";
   pictures.textContent = picturesRow(0);
@@ -33,7 +37,7 @@ export function makePanel(doc, parent, { onDetail, onAddGuests = () => {}, onWor
   actions.className = "row actions";
   const workers = heldButton(doc, WORKERS, onWorkers);
   actions.append(onceButton(doc, ADD_TEN, onAddGuests), workers);
-  parent.append(row, wait, time, pictures, actions);
+  parent.append(row, wait, time, pictures, busy, actions);
   return {
     actions,
     workers,
@@ -46,7 +50,8 @@ export function makePanel(doc, parent, { onDetail, onAddGuests = () => {}, onWor
       steps.set(STEPS.indexOf(step));
     },
     /** The stat rows: the wait from the switch to the last picture, the workers' seconds summed, and the bytes of the pictures the view shows at this step. */
-    setStats({ wait: waited = 0, seconds, bytes }) {
+    setStats({ wait: waited = 0, seconds, bytes, busy: b = 0, total = 0 }) {
+      busy.textContent = workersRow(b, total);
       wait.textContent = timeToDrawRow(waited);
       time.textContent = workerTimeRow(seconds);
       pictures.textContent = picturesRow(bytes);

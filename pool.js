@@ -49,6 +49,7 @@ export class Pool {
    */
   constructor({ module, count, makeWorker, order, onDrawn, onError, store, stamps, slow = 0, wantFrg = false, now = () => performance.now() / 1000 }) {
     this.order = order;
+    order.keepStyle("classic@day"); // the look the pool starts in, so the order's current look and the jobs' agree
     /** Whether each landed copy carries its one-sprite `FRG1` bytes (`frg`) too: the bench lands them itself. */
     this.wantFrg = wantFrg;
     this.style = "classic@day";
@@ -69,6 +70,8 @@ export class Pool {
     this.idle = [];
     this.pumping = false;
     this.stats = { drawn: 0, ms: 0, failed: 0 };
+    /** Jobs a worker has finished, drawn or read from the cache or failed; only ever goes up (the top bar's tick bar). */
+    this.finished = 0;
     /** family@density -> `{n, ms}`: what each kind of job took, for the Workers panel's bars. */
     this.means = new Map();
     /** The current burst of work: `have` sprites landed of the `of` asked since the pool last sat idle (or since `newBurst`). */
@@ -82,6 +85,7 @@ export class Pool {
     const w = this.makeWorker(id);
     const slot = { id, w, job: null, retiring: false };
     this.slots.set(id, slot);
+    this.order.looks.set(id, "classic@day"); // a worker starts in the first look, whatever the page shows
     return new Promise((res) => {
       slot.res = res;
       w.onmessage = (e) => {
@@ -132,6 +136,11 @@ export class Pool {
     if (slot.res) slot.res(); // a worker taken away before it was ready no longer holds `ready` back
   }
 
+  /** Pictures asked for and not yet handed to a worker. */
+  get waiting() {
+    return this.order.waiting();
+  }
+
   /** Workers with a job in flight. */
   get working() {
     let n = 0;
@@ -178,6 +187,11 @@ export class Pool {
     this.style = style;
     const dropped = this.order.keepStyle(style);
     this.burst.of = Math.max(this.burst.have, this.burst.of - dropped);
+  }
+
+  /** The Detail step she holds now (see `Order.setDetail`). */
+  setDetail(d) {
+    this.order.setDetail(d);
   }
 
   /** Ask for a sprite (see `Order.request`). Jobs go out together at the end of the tick, so a frame's whole ask is sorted first. */
@@ -275,12 +289,14 @@ export class Pool {
       this.order.cancel(m.name, m.density, m.style);
       this.burst.of--;
     } else if (m.kind === "drew") {
+      this.finished++;
       this.order.finish(m.name, m.style || "classic", m.density);
       if (m.cached) this.cache.hits++;
       else this.#recordDraw(m);
       this.burst.have++;
       this.onDrawn(m);
     } else if (m.kind === "failed") {
+      this.finished++;
       this.order.fail(m.name, m.style || "classic", m.density);
       this.stats.failed++;
       this.burst.have++;

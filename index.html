@@ -11,6 +11,13 @@
   .bar { position: fixed; left: 0; right: 0; box-sizing: border-box; display: flex; gap: 4px; padding: 6px max(8px, env(safe-area-inset-left));
          background: #2a1c3e; color: #f4efe6; font: 600 13px/1.1 ui-monospace, Menlo, monospace; user-select: none; -webkit-user-select: none; }
   #top { top: 0; align-items: center; justify-content: space-between; min-height: 44px; height: auto; border-bottom: 2px solid #14101c; }
+  #top { padding-bottom: 14px; }
+  #bars { position: absolute; left: 0; right: 0; bottom: 3px; display: flex; flex-direction: column; gap: 2px; padding: 0 max(8px, env(safe-area-inset-left)); pointer-events: none; }
+  #tick, #backlog { height: 4px; display: flex; gap: 1px; background: #14101c; border-radius: 2px; overflow: hidden; }
+  #tick b { flex: 1 1 0; background: transparent; }
+  #tick b.on { background: #f2c230; }
+  #tick.flash b { background: #fff3b0; }
+  #backlog i { display: block; height: 100%; width: 0; background: #5fd068; }
   #bottom { bottom: 0; padding-bottom: max(6px, env(safe-area-inset-bottom)); border-top: 2px solid #14101c; }
   .rows { display: flex; gap: 14px; white-space: nowrap; }
     .group { display: flex; gap: 4px; }
@@ -23,7 +30,8 @@
   #tray { bottom: var(--bottom-h); border-top: 2px solid #14101c; border-bottom: 0; }
   #tray .btn { flex: 0 1 auto; min-width: 92px; min-height: 36px; flex-direction: row; gap: 6px; padding: 4px 10px; }
   #tray .btn.once { margin-left: 12px; }
-  #topright { align-items: center; }
+  #topright { align-items: center; gap: 8px; }
+  #load { white-space: nowrap; }
   .btn.grey { opacity: 0.45; }
   .btn { flex: 1 1 0; min-width: 0; min-height: 44px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px;
          padding: 4px 2px; margin: 0; background: #3d2f55; color: inherit; font: inherit; border: 2px solid #14101c; border-radius: 4px; cursor: pointer;
@@ -36,8 +44,11 @@
   .btn.switch.on { border-color: #5fd068; }
   .btn.switch.on .lamp { background: #5fd068; box-shadow: 0 0 6px #5fd068; }
   .label { display: block; }
-  #panel, #looks { position: fixed; right: 8px; top: calc(var(--top-h) + 6px); box-sizing: border-box; max-width: calc(100vw - 16px); padding: 8px; display: flex; flex-direction: column; gap: 6px;
+  #panel, #looks, #about { position: fixed; right: 8px; top: calc(var(--top-h) + 6px); box-sizing: border-box; max-width: calc(100vw - 16px); padding: 8px; display: flex; flex-direction: column; gap: 6px;
            background: #2a1c3e; color: #f4efe6; border: 2px solid #14101c; border-radius: 4px; font: 600 13px/1.1 ui-monospace, Menlo, monospace; }
+  #about { max-height: calc(100vh - var(--top-h) - var(--bottom-h) - 24px); max-height: calc(100dvh - var(--top-h) - var(--bottom-h) - 24px); overflow-y: auto; width: 340px; font-weight: 400; line-height: 1.4; gap: 10px; }
+  #about h2 { margin: 0; font: 700 15px/1.3 ui-monospace, Menlo, monospace; }
+  #about p { margin: 0; }
   #looks .group { align-items: center; }
   #panel .row { display: flex; align-items: center; gap: 8px; }
   #looks .btn { flex: 0 0 auto; min-width: 60px; min-height: 32px; padding: 4px 8px; }
@@ -82,8 +93,14 @@
     .rows { gap: 10px; }
     #top { flex-direction: column; align-items: stretch; gap: 4px; }
     #topright { justify-content: space-between; gap: 4px; }
+    #load { position: absolute; right: max(8px, env(safe-area-inset-right)); top: 8px; font-size: 11px; }
+    #top .rows { font-size: 11px; gap: 8px; }
     #topright > .btn, #speeds .btn { flex: 1 1 0; min-width: 0; }
     #speeds { flex: 3 1 0; }
+    #topright > .btn.about .label { font-size: 0; }
+    #topright > .btn.about .label::after { content: "?"; font-size: 13px; }
+    #topright > .btn.about { flex: 0 0 44px; }
+    #about { width: auto; left: 8px; }
     #looks .rowlabel { flex: 0 0 56px; padding: 0; }
     #looks .btn { min-width: 0; padding: 4px 6px; }
   }
@@ -91,12 +108,13 @@
 </head>
 <body>
 <canvas id="c"></canvas>
-<div id="top" class="bar"><div class="rows"><span id="money"></span><span id="guests"></span><span id="drawing" class="gone"></span></div><div id="topright" class="group"><div id="speeds" class="group"></div></div></div>
+<div id="top" class="bar"><div class="rows"><span id="money"></span><span id="guests"></span></div><div id="topright" class="group"><div id="speeds" class="group"></div></div><div id="bars"><div id="tick"></div><div id="backlog"><i></i></div></div></div>
 <div id="line"></div>
 <div id="tip" class="gone"></div>
 <div id="tray" class="bar gone"></div>
 <div id="panel" class="gone"></div>
 <div id="looks" class="gone"><div id="styles" class="group"></div><div id="lights" class="group"></div><div id="palettes" class="group"></div></div>
+<div id="about" class="gone"></div>
 <div id="bottom" class="bar"><div id="tools" class="group"></div></div>
 <pre id="stats"></pre>
 <script type="module" src="main.js"></script>

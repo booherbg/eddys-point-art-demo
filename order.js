@@ -52,6 +52,13 @@ export class Order {
     this.view = { x: 0, y: 0, w: 1, h: 1 };
     /** The style the workers' models are in (Task 7): a worker draws one style's models at a time. */
     this.style = "classic";
+    /** The Detail step held, or null until one is set: a fine picture finer than it waits behind the current look's own. */
+    this.detail = null;
+    this.nextSeq = 0;
+    /** worker -> the look its forge is built for; a job in another look costs it a whole rebuild. */
+    this.looks = new Map();
+    /** How many times a worker took a job in a look other than its own (a forge rebuild each). */
+    this.rebuilds = 0;
     /** group -> ms its models took to build, as a worker measured it. */
     this.prep = new Map();
   }
@@ -97,7 +104,8 @@ export class Order {
     const s = this.states.get(id);
     if (s === "drawing" || s === "done" || s === "failed") return;
     this.states.set(id, "queued");
-    this.queue.set(id, r);
+    const prior = this.queue.get(id);
+    this.queue.set(id, { ...r, seq: prior ? prior.seq : this.nextSeq++ });
   }
 
   /** "queued", "drawing", "done", or undefined for a sprite in a style and density. A number in the second place means density. */
@@ -108,7 +116,9 @@ export class Order {
   }
 
   /**
-   * Drop queued jobs for old styles when a new one is selected; a worker's in-flight job can still finish. A new style also forgets
+   * A new look is selected: nothing queued is dropped (Blaine, 2026-11-26: "don't remove anything from the queue"). The current look's jobs
+   * go first (`#key`'s band 0), every other look's after them in the order they were asked, so a look she left finishes in the
+   * background; a worker's in-flight job finishes as ever. A new style also forgets
    * which workers hold which groups (a worker's models are one style's, and it builds the next style's afresh, group by group,
    * as its sprites are asked for), so a group built in one style is never taken for another's. The groups' build times stay: how
    * long a group takes does not depend on its look.
@@ -119,15 +129,12 @@ export class Order {
       this.holders.clear();
       this.building.clear();
     }
-    let dropped = 0;
-    for (const [key, r] of this.queue) {
-      if ((r.style || "classic") !== style) {
-        this.queue.delete(key);
-        this.states.delete(key);
-        dropped++;
-      }
-    }
-    return dropped;
+    return 0;
+  }
+
+  /** The Detail step she holds now: a queued fine picture finer than it waits behind the current look's own. */
+  setDetail(d) {
+    this.detail = d;
   }
 
   /** How many names wait for a worker. */
@@ -136,7 +143,10 @@ export class Order {
   }
 
   /** `a` before `b`: negative when a is more urgent. */
-  #key(r) {
+  #key(r, worker) {
+    const other = (r.style || "classic") !== this.style || (this.detail !== null && r.density > this.detail);
+    // A worker keeps its look: it takes the jobs of its own look first, and changes look only when none are left.
+    if (other) return [1, (r.style || "classic") === this.looks.get(worker) ? 0 : 1, 0, 0, 0, r.seq];
     const v = this.view;
     const b = this.boxes[r.name];
     // The wasm culls by box, so a sprite counts as on screen when its box meets the view (its anchor alone when it has no box).
@@ -151,7 +161,7 @@ export class Order {
       rank = coarseRank(r.frame.index, r.frame.count);
     }
     const dist = Math.hypot(r.x - (v.x + v.w / 2), r.y - (v.y + v.h / 2));
-    return [bucket, r.density > 1 ? 1 : 0, later, rank, dist];
+    return [0, bucket, r.density > 1 ? 1 : 0, later, rank, dist];
   }
 
   /**
@@ -162,11 +172,20 @@ export class Order {
    */
   next(worker, mode = "any") {
     let mine = null, unheld = null, any = null;
+    // Another look's jobs wait until the current look has none queued at all (not only none this worker may take), so a worker
+    // never rebuilds its forge for an old look while a current-look job is only held back.
+    let current = false;
+    for (const r of this.queue.values()) if (this.#key(r, worker)[0] === 0) { current = true; break; }
     for (const r of this.queue.values()) {
       const group = groupKey(r.family, r.name);
-      if (!this.#may(worker, group)) continue;
-      const key = this.#key(r);
+      const key = this.#key(r, worker);
+      if (key[0] === 1 && current) continue;
       const entry = { r, key, group };
+      if (key[0] === 1) {
+        if (!any || less(key, any.key)) any = entry; // another look's job: any worker may draw it, after the current look's
+        continue;
+      }
+      if (!this.#may(worker, group)) continue;
       const held = this.holders.get(group);
       if (!any || less(key, any.key)) any = entry;
       if (held && held.has(worker)) {
@@ -176,7 +195,7 @@ export class Order {
       }
     }
     if (!any) return null;
-    const ok = (e) => e && e.key[0] <= any.key[0];
+    const ok = (e) => e && (e.key[0] < any.key[0] || (e.key[0] === any.key[0] && e.key[1] <= any.key[1]));
     let pick;
     if (mode === "mine") pick = ok(mine) ? mine : null;
     else if (mode === "unheld") pick = ok(unheld) ? unheld : null;
@@ -186,6 +205,15 @@ export class Order {
     const id = jobKey(name, pick.r.style, pick.r.density);
     this.queue.delete(id);
     this.states.set(id, "drawing");
+    const look = pick.r.style || "classic";
+    const was = this.looks.get(worker);
+    this.looks.set(worker, look);
+    if (was !== undefined && was !== look) {
+      // The worker rebuilds its forge for this look, so it holds none of another look's groups.
+      this.rebuilds++;
+      for (const h of this.holders.values()) h.delete(worker);
+    }
+    if (pick.key[0] === 1) return { ...pick.r, build: true };
     const held = this.holders.get(pick.group);
     // A group this worker does not hold is built first, as a job of its own; while it is, the group is this worker's alone.
     if (held && held.has(worker)) return pick.r;
@@ -221,7 +249,7 @@ export class Order {
   upcoming(limit = 5) {
     const list = [];
     for (const r of this.queue.values()) {
-      const entry = { r, key: this.#key(r) };
+      const entry = { r, key: this.#key(r, "") };
       let at = list.length;
       while (at > 0 && less(entry.key, list[at - 1].key)) at--;
       if (at < limit) {

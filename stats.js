@@ -43,8 +43,30 @@ export function cacheRows({ hits, misses, sizes }) {
     ...Array.from(totals, ([d, { entries, bytes }]) => `Cache ${d}x: ${entries} ${entries === 1 ? "entry" : "entries"}, ${(bytes / 1_000_000).toFixed(1)} MB`),
   ];
 }
-/** The bar's row while pictures are on their way (`have` landed of the `of` this view wants); "" once the last has landed. */
-export const drawingRow = (have, of) => (of > have ? `Drawing: ${have} of ${of}` : "");
+/** Segments in the tick bar's fill: 20, or fewer when the batch is smaller but never under 5, so a lone job does not fill and flash the whole bar (`peak`: the most queued since the queue was last empty). */
+export const tickSegments = (peak) => Math.max(5, Math.min(20, peak));
+/** Segments lit: one for every job a worker finished, wrapping when the fill is full. */
+export const tickFilled = (finished, segments) => finished % segments;
+
+/**
+ * The backlog bar: the queued jobs over the most queued since the queue was last empty. It shrinks as jobs finish, grows when new work
+ * arrives, is 0 exactly when nothing waits, and forgets its peak when the queue empties.
+ */
+export class Backlog {
+  constructor() {
+    this.peak = 0;
+  }
+
+  /** `waiting`: the pool's own queued count. Returns the bar's width, 0 to 1. */
+  read(waiting) {
+    if (waiting <= 0) {
+      this.peak = 0;
+      return 0;
+    }
+    this.peak = Math.max(this.peak, waiting);
+    return waiting / this.peak;
+  }
+}
 
 /**
  * The real time from a switch (Detail, and the style switch's when it lands) to the last picture it asked for landing, in
@@ -85,3 +107,8 @@ export class DrawClock {
     return (this.running ? now : this.endAt) - this.startAt;
   }
 }
+
+/** The top bar's row beside the Tools button: pictures waiting for a worker (the pool's own count). */
+export const queueRow = (waiting) => `Queue: ${waiting}`;
+/** The Tools panel's row: workers drawing now out of the pool's total. */
+export const workersRow = (busy, total) => `Workers: ${busy} of ${total}`;
