@@ -23,7 +23,7 @@
 // that are ready. A group that took over `SLOW_MS` to build is built by that one worker only, since each worker that held it would pay
 // the whole cost and its memory again; one that built faster is open to every worker.
 
-import { spriteKey } from "./detail.js";
+import { spriteKey, lookOf } from "./detail.js";
 import { groupKey } from "./core.js";
 
 /** The frame's rank among `count` frames, coarsest first: the bits of `frame` reversed (count 32: 0, 16, 8, 24, ...). */
@@ -33,6 +33,9 @@ export function coarseRank(frame, count) {
   for (let b = 0; b < bits; b++) if (frame & (1 << b)) r |= 1 << (bits - 1 - b);
   return r;
 }
+
+/** Seconds a queued sprite may stay off screen before its job is dropped (art demo, note 13). */
+export const OFF_SCREEN_S = 5;
 
 /** A group whose models take longer than this to build, in ms, is slow: built once, by one worker. */
 export const SLOW_MS = 1000;
@@ -50,8 +53,10 @@ export class Order {
     /** group -> the worker building its models now (the group's sprites wait for it). */
     this.building = new Map();
     this.view = { x: 0, y: 0, w: 1, h: 1 };
-    /** The style the workers' models are in (Task 7): a worker draws one style's models at a time. */
-    this.style = "classic";
+    /** The look the workers' models are in (Task 7): a worker draws one look's models at a time. */
+    this.style = "classic@day";
+    /** id -> the second a queued job was first seen off screen, for `sweep`. */
+    this.off = new Map();
     /** The Detail step held, or null until one is set: a fine picture finer than it waits behind the current look's own. */
     this.detail = null;
     this.nextSeq = 0;
@@ -100,6 +105,7 @@ export class Order {
    */
   request(r) {
     if (!r.family) throw new Error(`no family for sprite ${r.name}`);
+    r = { ...r, style: lookOf(r.style) };
     const id = jobKey(r.name, r.style, r.density);
     const s = this.states.get(id);
     if (s === "drawing" || s === "done" || s === "failed") return;
@@ -124,6 +130,7 @@ export class Order {
    * long a group takes does not depend on its look.
    */
   keepStyle(style) {
+    style = lookOf(style);
     if (style !== this.style) {
       this.style = style;
       this.holders.clear();
@@ -144,15 +151,11 @@ export class Order {
 
   /** `a` before `b`: negative when a is more urgent. */
   #key(r, worker) {
-    const other = (r.style || "classic") !== this.style || (this.detail !== null && r.density > this.detail);
+    const other = r.style !== this.style || (this.detail !== null && r.density > this.detail);
     // A worker keeps its look: it takes the jobs of its own look first, and changes look only when none are left.
-    if (other) return [1, (r.style || "classic") === this.looks.get(worker) ? 0 : 1, 0, 0, 0, r.seq];
+    if (other) return [1, r.style === this.#lookOfWorker(worker) ? 0 : 1, 0, 0, 0, r.seq];
     const v = this.view;
-    const b = this.boxes[r.name];
-    // The wasm culls by box, so a sprite counts as on screen when its box meets the view (its anchor alone when it has no box).
-    const onScreen = b
-      ? r.x - b[2] < v.x + v.w && r.x - b[2] + b[0] > v.x && r.y - b[3] < v.y + v.h && r.y - b[3] + b[1] > v.y
-      : r.x >= v.x && r.x < v.x + v.w && r.y >= v.y && r.y < v.y + v.h;
+    const onScreen = this.#onScreen(r);
     const bucket = r.prefetch ? 2 : onScreen ? 0 : 1;
     let later = 0;
     let rank = 0;
@@ -160,8 +163,51 @@ export class Order {
       later = 1;
       rank = coarseRank(r.frame.index, r.frame.count);
     }
-    const dist = Math.hypot(r.x - (v.x + v.w / 2), r.y - (v.y + v.h / 2));
+    const dist = r.x === undefined ? 0 : Math.hypot(r.x - (v.x + v.w / 2), r.y - (v.y + v.h / 2));
     return [0, bucket, r.density > 1 ? 1 : 0, later, rank, dist];
+  }
+
+  /** The look worker `worker`'s forge is built for, by its one name; undefined before its first job. */
+  #lookOfWorker(worker) {
+    const l = this.looks.get(worker);
+    return l === undefined ? undefined : lookOf(l);
+  }
+
+  /** Whether the job's sprite meets the view: the wasm culls by box, so its box counts (its anchor alone when it has no box). */
+  #onScreen(r) {
+    // A job with no place (a build-bar icon, any picture the page draws for itself) is never off the view: nothing says where it is.
+    if (r.x === undefined) return true;
+    const v = this.view;
+    const b = this.boxes[r.name];
+    return b
+      ? r.x - b[2] < v.x + v.w && r.x - b[2] + b[0] > v.x && r.y - b[3] < v.y + v.h && r.y - b[3] + b[1] > v.y
+      : r.x >= v.x && r.x < v.x + v.w && r.y >= v.y && r.y < v.y + v.h;
+  }
+
+  /**
+   * Housekeeping at `now` (seconds on any steady clock): a queued job whose sprite has been off the view for `OFF_SCREEN_S` seconds, with
+   * no frame in between that had it on screen, is dropped, so the queue holds what the view wants and not every place she has been. Never a
+   * prefetch (the bar's items wait by design), and never a frame of a ride on screen (its box is on screen, so it never starts the clock).
+   * A dropped job may be asked again (the view asks for what it still wants); the list says which went, for the pool's counts and reserves.
+   */
+  sweep(now) {
+    const dropped = [];
+    for (const [id, r] of this.queue) {
+      if (r.prefetch || this.#onScreen(r)) {
+        this.off.delete(id);
+        continue;
+      }
+      const since = this.off.get(id);
+      if (since === undefined) this.off.set(id, now);
+      else if (now - since >= OFF_SCREEN_S) {
+        this.queue.delete(id);
+        this.states.delete(id);
+        this.off.delete(id);
+        dropped.push({ name: r.name, density: r.density > 1 ? r.density : 1, style: r.style });
+      }
+    }
+    if (this.off.size > this.queue.size) for (const id of [...this.off.keys()]) if (!this.queue.has(id)) this.off.delete(id);
+    return dropped;
   }
 
   /**
@@ -204,9 +250,10 @@ export class Order {
     const { name } = pick.r;
     const id = jobKey(name, pick.r.style, pick.r.density);
     this.queue.delete(id);
+    this.off.delete(id);
     this.states.set(id, "drawing");
-    const look = pick.r.style || "classic";
-    const was = this.looks.get(worker);
+    const look = pick.r.style;
+    const was = this.#lookOfWorker(worker);
     this.looks.set(worker, look);
     if (was !== undefined && was !== look) {
       // The worker rebuilds its forge for this look, so it holds none of another look's groups.
@@ -287,7 +334,7 @@ export class Order {
   }
 }
 
-const jobKey = (name, style = "classic", density = 1) => spriteKey(`${style}\0${name}`, density);
+const jobKey = (name, style = "classic", density = 1) => spriteKey(`${lookOf(style)}\0${name}`, density);
 
 function less(a, b) {
   for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return a[i] < b[i];

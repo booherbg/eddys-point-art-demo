@@ -8,10 +8,10 @@
 
 import { paint, WORN_CAP } from "./recolor.js";
 import { grade } from "./grade.js";
-import { spriteKey, MAX_STEP } from "./detail.js";
+import { spriteKey, MAX_STEP, lookOf } from "./detail.js";
 
 const STYLES = ["classic", "soft", "toybox"];
-const lookKey = (style = "classic") => (style.includes("@") ? style : `${style}@day`);
+const lookKey = lookOf;
 const cacheKey = (style, name, density = 1) => spriteKey(`${lookKey(style)}\0${name}`, density);
 
 export const INK = "#2A1C3E";
@@ -52,7 +52,7 @@ export class Sprites {
    * `ask(req)`: how a sprite is requested (the pool's `request`). `boxes`: name -> `[w, h, ax, ay]`, the size the sketch
    * is drawn from before the picture exists.
    */
-  constructor({ ask, boxes = {}, style = "classic", rowOf = null, makeWorn = null, cap = Infinity, onEvict = () => {} }) {
+  constructor({ ask, boxes = {}, style = "classic@day", rowOf = null, makeWorn = null, cap = Infinity, onEvict = () => {} }) {
     this.ask = ask;
     this.style = style;
     this.previousStyle = null;
@@ -266,6 +266,13 @@ export class Sprites {
     this.touched.add(cacheKey(style, name, d));
   }
 
+  /** A queued job the pool dropped for waiting off screen too long (`onDropped`): its reserve ends, and the view asks again if it still wants it. */
+  dropped({ name, density = 1, style = this.style }) {
+    const key = cacheKey(style, name, density);
+    this.#unclaim(key);
+    this.sketched.delete(key);
+  }
+
   /** A draw that failed (the pool's `onError`): that picture is never waited for. */
   failed({ name, density = 1, style = this.style }) {
     const key = cacheKey(style, name, density);
@@ -410,7 +417,7 @@ export class Sprites {
   /** A cached picture in another style holds the place until this style's draw lands. */
   #fallback(name, style, d) {
     for (const candidate of [this.previousStyle, ...STYLES]) {
-      if (!candidate || candidate === style) continue;
+      if (!candidate || lookKey(candidate) === lookKey(style)) continue;
       const e = this.#best(name, d, candidate);
       if (e) return e;
     }

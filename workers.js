@@ -30,9 +30,13 @@ export const HOLD = 0.95;
 export const NEXT_SHOWN = 5;
 /** How often the open panel reads the pool, in seconds. */
 export const EVERY = 0.25;
+/** How often it walks the stored copies for its Cache rows, in seconds: that read goes through IndexedDB, so it is not a read of the pool (item 2). */
+export const SIZES_EVERY = 5;
+/** Whether a read last made at `last` is due at `now` (seconds), `every` apart. */
+export const due = (last, now, every) => now - last >= every;
 
-/** A sprite as the panel names it: its name (the Detail step is the one she set, so it is not repeated on every row). */
-export const spriteLabel = ({ name }) => name;
+/** A sprite as the panel names it: its name and the density it is drawn at (`gate_r0 3x`; 1x is the game's own size). */
+export const spriteLabel = ({ name, density = 1 }) => `${name} ${density > 1 ? density : 1}x`;
 export const workerRow = (n, job) => `Worker ${n}: ${job ? spriteLabel(job) : "Idle"}`;
 export const waitingRow = (n) => `Waiting: ${n}`;
 export const drawnRow = (have, of) => `Drawn: ${have} of ${of}`;

@@ -43,28 +43,20 @@ export function cacheRows({ hits, misses, sizes }) {
     ...Array.from(totals, ([d, { entries, bytes }]) => `Cache ${d}x: ${entries} ${entries === 1 ? "entry" : "entries"}, ${(bytes / 1_000_000).toFixed(1)} MB`),
   ];
 }
-/** Segments in the tick bar's fill: 20, or fewer when the batch is smaller but never under 5, so a lone job does not fill and flash the whole bar (`peak`: the most queued since the queue was last empty). */
+/** Segments in the tick bar's fill: 20, or fewer when the batch is smaller but never under 5, so a lone job does not fill and flash the whole bar (`peak`: the most queued in the batch). */
 export const tickSegments = (peak) => Math.max(5, Math.min(20, peak));
 /** Segments lit: one for every job a worker finished, wrapping when the fill is full. */
 export const tickFilled = (finished, segments) => finished % segments;
 
 /**
- * The backlog bar: the queued jobs over the most queued since the queue was last empty. It shrinks as jobs finish, grows when new work
- * arrives, is 0 exactly when nothing waits, and forgets its peak when the queue empties.
+ * The green bar: the jobs done over the jobs asked since the queue was last empty (the pool's burst: `have` of `of`). It fills as jobs
+ * finish, so full means finished; new work asked mid-way lowers it a little, and the next burst after an empty queue starts from empty
+ * (item 1, note 13; it was the jobs waiting over its peak, which read full when the work had only just been asked).
  */
 export class Backlog {
-  constructor() {
-    this.peak = 0;
-  }
-
-  /** `waiting`: the pool's own queued count. Returns the bar's width, 0 to 1. */
-  read(waiting) {
-    if (waiting <= 0) {
-      this.peak = 0;
-      return 0;
-    }
-    this.peak = Math.max(this.peak, waiting);
-    return waiting / this.peak;
+  /** `have` jobs landed of the `of` asked: the bar's width, 0 to 1 (0 while nothing has been asked). */
+  read(have, of) {
+    return of > 0 ? Math.max(0, Math.min(1, have / of)) : 0;
   }
 }
 

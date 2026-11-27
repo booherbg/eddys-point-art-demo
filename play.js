@@ -188,8 +188,9 @@ export class Hands {
   }
 
   /**
-   * A lift: `{tap: tile}` when it was a tap with a tool held (it builds), else null (a pan, or a tap with no tool held, which
-   * does nothing: Blaine, 2026-11-18, a status card on a tap "just gets in the way").
+   * A lift: `{tap: tile}` when it was a tap with a tool held (it builds); `{card: {x, y}}` when it was a tap with no tool held (the art pixel
+   * under it, when the press gave one as `at`: the page asks whether a guest stands there, and opens her card, art demo note 14); else null (a
+   * pan). A status card on a tap "just gets in the way" (Blaine, 2026-11-18), so only a tap on a guest opens one, and a tap on nothing does nothing.
    */
   up(p) {
     this.fingers.delete(p.id);
@@ -203,7 +204,7 @@ export class Hands {
     if (d.touch) this.cursor = null;
     if (d.moved) return null;
     if (this.tool !== null) return p.tile ? { tap: p.tile } : null;
-    return null;
+    return p.at ? { card: p.at } : null;
   }
 
   /** The pointer left the page. */

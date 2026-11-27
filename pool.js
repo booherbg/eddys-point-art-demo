@@ -3,6 +3,7 @@
 // real `Worker` factory.
 import { groupKey } from "./core.js";
 import { picture } from "./draw-job.js";
+import { lookOf } from "./detail.js";
 
 /**
  * How many workers (ruling 6): the machine's cores minus one, at most seven, on a phone as on a laptop (Blaine, 2026-11-26:
@@ -14,6 +15,8 @@ export function workerCount({ cores }) {
   return Math.min(MAX_SUGGESTED, spare);
 }
 
+/** How often, in seconds, the pool sweeps the queue for jobs off screen too long. */
+const SWEEP_EVERY_S = 0.5;
 /** The most workers `workerCount` gives any machine. */
 export const MAX_SUGGESTED = 7;
 /** The Workers panel's range for a count she sets (Task 28): past the core count the workers share cores, and the panel's numbers show it. */
@@ -47,7 +50,7 @@ export class Pool {
    * The count can change while it runs (`resize`, Task 28): a worker is added with no reload, and one taken away finishes the sprite it is
    * drawing first, so no job is lost or drawn twice. Each worker keeps its id for good (a taken one's id is never reused).
    */
-  constructor({ module, count, makeWorker, order, onDrawn, onError, store, stamps, slow = 0, wantFrg = false, now = () => performance.now() / 1000 }) {
+  constructor({ module, count, makeWorker, order, onDrawn, onError, onDropped, store, stamps, slow = 0, wantFrg = false, now = () => performance.now() / 1000 }) {
     this.order = order;
     order.keepStyle("classic@day"); // the look the pool starts in, so the order's current look and the jobs' agree
     /** Whether each landed copy carries its one-sprite `FRG1` bytes (`frg`) too: the bench lands them itself. */
@@ -64,6 +67,9 @@ export class Pool {
     this.now = now;
     this.onDrawn = onDrawn || (() => {});
     this.onError = onError || (() => {});
+    /** A queued job that waited off screen too long and was dropped (`Order.sweep`): the page ends its reserve. */
+    this.onDropped = onDropped || (() => {});
+    this.sweptAt = -Infinity;
     /** id -> `{id, w, job, retiring}`: `job` is `{name, family, density, at}` while it draws, `retiring` once it is to go. */
     this.slots = new Map();
     this.nextId = 0;
@@ -180,10 +186,19 @@ export class Pool {
 
   setView(view) {
     this.order.setView(view);
+    // Twice a second: a queued job whose sprite has been off screen for `OFF_SCREEN_S` goes, and leaves the burst's count of what was asked.
+    const t = this.now();
+    if (t - this.sweptAt < SWEEP_EVERY_S) return;
+    this.sweptAt = t;
+    for (const d of this.order.sweep(t)) {
+      this.burst.of = Math.max(this.burst.have, this.burst.of - 1);
+      this.onDropped(d);
+    }
   }
 
   /** Select the look sent with new drawing work and drop queued work for older looks. */
   setStyle(style) {
+    style = lookOf(style);
     this.style = style;
     const dropped = this.order.keepStyle(style);
     this.burst.of = Math.max(this.burst.have, this.burst.of - dropped);
@@ -198,7 +213,7 @@ export class Pool {
   request(r) {
     const quiet = this.order.waiting() === 0 && this.working === 0;
     const before = this.order.waiting();
-    this.order.request({ ...r, style: r.style || this.style });
+    this.order.request({ ...r, style: lookOf(r.style || this.style) });
     if (this.order.waiting() > before) {
       if (quiet) this.burst = { have: 0, of: 0 };
       this.burst.of++;
@@ -279,7 +294,7 @@ export class Pool {
     // other sprites (and counts as measured, so none waits on it for good).
     // A reply in a style since left says nothing about the workers' models: the switch already forgot them (Task 7).
     const group = groupKey(m.family, m.name);
-    if ((m.style || "classic") === this.style) {
+    if (lookOf(m.style || "classic") === this.style) {
       if (m.prep !== undefined) this.order.built(group, m.prep, id);
       else if (m.cached || stale) this.order.releaseBuild(group, id);
       else if (m.kind === "failed") this.order.buildFailed(group, id);

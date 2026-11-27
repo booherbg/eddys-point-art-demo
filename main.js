@@ -1,17 +1,19 @@
 // The live forge's park (plan 2026-11-18-live-forge, Task 3): the sim running in the page at 60 steps a second, its draw list
 // from `park.wasm`, every sprite drawn the first time it is seen by the worker pool (Task 2), the ground drawn in code.
-// The camera is hers: it moves only when she drags, or zooms (the wheel, the keys 1 to 5, plus and minus, a double tap with no tool, or a two-finger pinch
+// The camera is hers: it moves only when she drags, or zooms (the wheel, the keys 1 to 7, plus and minus, a double tap with no tool, or a two-finger pinch
 // held); a build never moves it, and neither does the Detail row (Task 18: it changes how pictures are drawn, never the view). Task 4 adds the play: the build bar (Task 26: trays, a held tool inside one), the ghost with its price or the sim's refusal, the tap,
-// the speeds, and the two stat rows. Parameters: `noprefetch` (do not ask for the bar's pictures: E3 without them), `stats` (the dev overlay), `zoom` (1 to 5), `seed`, `workers`, `slow` (ms each job waits).
+// the speeds, and the two stat rows. Parameters: `noprefetch` (do not ask for the bar's pictures: E3 without them), `stats` (the dev overlay), `zoom` (1 to 7), `seed`, `workers`, `slow` (ms each job waits).
 import { Order } from "./order.js";
 import { artStamps } from "./core.js";
 import { openArtStore } from "./store.js";
 import { Pool, detectWorkerCount } from "./pool.js";
-import { cacheCap, screenZoom } from "./detail.js";
+import { cacheCap, screenZoom, densityFor } from "./detail.js";
 import { Sprites } from "./sprites.js";
 import { canvasMaker } from "./recolor.js";
 import { grade, parseLook } from "./grade.js";
 import { fpsRow, prepRows, wasmMemoryRow, jsHeapRow, jsHeapBytes, spriteCacheRow, spritesDrawnRow, spritesCachedRow, onScreenRow, queueRow, tickSegments, tickFilled, Backlog, DrawClock } from "./stats.js";
+import { FrameLog, perfRows, chartPoints } from "./perf.js";
+import { CHART_W, CHART_H } from "./panel.js";
 import { openPark } from "./park.js";
 import { Scene, Camera, wheelStep, parseTable, makeAtlas, GroundAtlases, RECORD } from "./scene.js";
 import { STYLES, LIGHTS, PALETTES, DEFAULT_PALETTE, STYLE_ROW, LIGHT_ROW, PALETTE_ROW, lookKey, SPEEDS, OPENING, tileAt, diamond, Hands, Prefetch, inMarkers, inPulse, IN_GREEN, IN_CASING } from "./play.js";
@@ -19,7 +21,9 @@ import { heldGroup, heldButton, labeledGroup } from "./bar.js";
 import { TOOLS, LOOKS, ABOUT, START, tapTray, tapTool, tapRemove, labelOfTool, isRide, makeBuildBar } from "./trays.js";
 import { fillAbout } from "./about.js";
 import { makePanel } from "./panel.js";
-import { makeWorkersPanel, snapshot, workerTaps, clearCache } from "./workers.js";
+import { drawPopups } from "./popups.js";
+import { makeCard, drawPortrait, PORTRAIT_ZOOM } from "./card.js";
+import { makeWorkersPanel, snapshot, workerTaps, clearCache, due, SIZES_EVERY } from "./workers.js";
 
 const q = new URLSearchParams(location.search);
 /** The count the browser suggests (the Workers panel's Suggested and Reset), and the one the page starts with (`?workers=` overrides only that). */
@@ -62,9 +66,9 @@ const atlas = new GroundAtlases({
 });
 
 const order = new Order({ boxes: table.boxes });
-// The picture cache's byte budget (Task 31, b582): none on any device, `?cache=<MB>` for a test of one.
+// The picture cache's byte budget (Task 31, b582): 150 MB on every device (item 11), `?cache=<MB>` for another, `?cache=0` for none.
 const cap = cacheCap({ param: q.get("cache") });
-const sprites = new Sprites({ ask: (r) => pool.request(r), boxes: table.boxes, cap, onEvict: (name, d, style) => order.forget(name, d, style), rowOf: (id) => api.wearRow(id), makeWorn: canvasMaker(document) });
+const sprites = new Sprites({ ask: (r) => pool.request(r), boxes: table.boxes, cap, style: look(), onEvict: (name, d, style) => order.forget(name, d, style), rowOf: (id) => api.wearRow(id), makeWorn: canvasMaker(document) });
 const pool = new Pool({
   module: forgeModule,
   count: workers,
@@ -74,9 +78,10 @@ const pool = new Pool({
   stamps,
   makeWorker: () => new Worker("pool-worker.js", { type: "module" }),
   onDrawn: (r) => (sprites.landed(r, nowS()), clock.landed(nowS())),
+  onDropped: (d) => sprites.dropped(d),
   onError: (r) => (sprites.failed(r), console.log(`lf-failed ${r.name}: ${r.error || "no picture"}`)),
 });
-const scene = new Scene({ api, table, sprites, ask: (r) => pool.request(r), atlas });
+const scene = new Scene({ api, table, sprites, ask: (r) => pool.request(r), atlas, canvas: (width, height) => Object.assign(document.createElement("canvas"), { width, height }) });
 
 // The camera's center in art pixels, over the carousel and the gate to start; moved only by her.
 const camera = new Camera({ x: -200, y: 450 }, api.size, Number(q.get("zoom")) || 1);
@@ -103,13 +108,19 @@ function press(e) {
   const s = scale();
   const view = camera.view(canvas.width, canvas.height, pixelRatio());
   const art = { x: view.x + (e.clientX * dprNow()) / s, y: view.y + (e.clientY * dprNow()) / s };
-  return { id: e.pointerId, sx: e.clientX, sy: e.clientY, tile: tileAt(art.x, art.y), touch: e.pointerType !== "mouse" };
+  return { id: e.pointerId, sx: e.clientX, sy: e.clientY, tile: tileAt(art.x, art.y), at: art, touch: e.pointerType !== "mouse" };
 }
 addEventListener("pointerdown", () => line.classList.add("gone"), { capture: true });
+let cardWait = 0;
+let doubled = false;
 canvas.addEventListener("pointerdown", (e) => {
   const r = hands.down({ ...press(e), t: performance.now() });
   canvas.setPointerCapture(e.pointerId);
-  if (r?.double) camera.cycle();
+  if (r?.double) {
+    clearTimeout(cardWait); // the first tap of a double tap opened nothing yet
+    doubled = true; // nor does its second lift
+    camera.cycle();
+  }
 });
 canvas.addEventListener("pointermove", (e) => {
   const m = hands.move(press(e));
@@ -124,7 +135,11 @@ canvas.addEventListener("pointermove", (e) => {
 const end = (e) => {
   canvas.classList.remove("drag");
   const r = hands.up(press(e));
-  if (r?.tap) build(r.tap); // no tool held: a tap does nothing
+  const wasDouble = doubled;
+  doubled = false;
+  if (r?.tap) build(r.tap);
+  // No tool held: a tap on a guest opens her card, a moment after the lift so a double tap (the zoom) opens none. The view never moves.
+  else if (r?.card && !wasDouble) cardWait = setTimeout(() => openCard(api.guestAt(r.card.x, r.card.y)), 330);
 };
 canvas.addEventListener("pointerup", end);
 canvas.addEventListener("pointercancel", (e) => {
@@ -185,36 +200,30 @@ const speedBar = heldGroup(document, document.getElementById("speeds"), SPEEDS.m
   speed = SPEEDS[i][1];
   speedBar.set(i);
 });
-const styleBar = labeledGroup(document, document.getElementById("styles"), STYLE_ROW, STYLES, (i) => {
-  selectedStyle = STYLES[i].toLowerCase();
-  const appearance = look();
-  clock.start(nowS());
-  atlas.setLight(appearance);
-  sprites.setStyle(appearance);
-  pool.setStyle(appearance);
-  if (window.__lf) Object.assign(window.__lf, { style: selectedStyle, light: selectedLight, look: appearance });
-  styleBar.set(i);
-});
-styleBar.set(0);
-const lightBar = labeledGroup(document, document.getElementById("lights"), LIGHT_ROW, LIGHTS, (i) => {
-  selectedLight = LIGHTS[i].toLowerCase();
-  const appearance = look();
-  clock.start(nowS());
-  atlas.setLight(appearance);
-  sprites.setStyle(appearance);
-  pool.setStyle(appearance);
-  if (window.__lf) Object.assign(window.__lf, { style: selectedStyle, light: selectedLight, look: appearance });
-  lightBar.set(i);
-});
-lightBar.set(0);
-const paletteBar = labeledGroup(document, document.getElementById("palettes"), PALETTE_ROW, PALETTES, (i) => {
-  selectedPalette = PALETTES[i].toLowerCase();
+/** A look changed (its style, light or colors): the ground, the picture cache and the pool all take the one look key, so a sprite is one job (b740). */
+function setLook() {
   const appearance = look();
   clock.start(nowS());
   atlas.setLight(appearance);
   sprites.setStyle(appearance);
   pool.setStyle(appearance);
   if (window.__lf) Object.assign(window.__lf, { style: selectedStyle, light: selectedLight, palette: selectedPalette, look: appearance });
+}
+const styleBar = labeledGroup(document, document.getElementById("styles"), STYLE_ROW, STYLES, (i) => {
+  selectedStyle = STYLES[i].toLowerCase();
+  setLook();
+  styleBar.set(i);
+});
+styleBar.set(0);
+const lightBar = labeledGroup(document, document.getElementById("lights"), LIGHT_ROW, LIGHTS, (i) => {
+  selectedLight = LIGHTS[i].toLowerCase();
+  setLook();
+  lightBar.set(i);
+});
+lightBar.set(0);
+const paletteBar = labeledGroup(document, document.getElementById("palettes"), PALETTE_ROW, PALETTES, (i) => {
+  selectedPalette = PALETTES[i].toLowerCase();
+  setLook();
   paletteBar.set(i);
 });
 paletteBar.set(PALETTES.findIndex((name) => name.toLowerCase() === DEFAULT_PALETTE));
@@ -227,7 +236,7 @@ canvas.addEventListener("wheel", (e) => {
   camera.zoomBy(e.deltaY < 0 ? 1 : -1);
 }, { passive: false });
 addEventListener("keydown", (e) => {
-  if (/^[1-5]$/.test(e.key)) camera.zoomTo(Number(e.key));
+  if (/^[1-7]$/.test(e.key)) camera.zoomTo(Number(e.key));
   else if (e.key === "-") camera.zoomBy(-1);
   else if (e.key === "+" || e.key === "=") camera.zoomBy(1);
   else if (e.key === "r" || e.key === "R") turnIt();
@@ -250,8 +259,11 @@ const say = (why) => {
 };
 let cacheSizes = [];
 let readingCache = false;
+let sizesAt = -Infinity;
 function readCacheSizes() {
-  if (readingCache) return;
+  // The stored copies' sizes walk IndexedDB: every 5 s while the panel is open, not at each of its quarter-second reads.
+  if (readingCache || !due(sizesAt, nowS(), SIZES_EVERY)) return;
+  sizesAt = nowS();
   readingCache = true;
   store.sizes().then((sizes) => { cacheSizes = sizes; }).finally(() => { readingCache = false; });
 }
@@ -266,6 +278,7 @@ const workersPanel = makeWorkersPanel(document, document.body, {
     clear: async () => {
       await clearCache({ sprites, pool, detail, clock, now: nowS() });
       cacheSizes = await store.sizes();
+      sizesAt = nowS();
     },
     say,
     refresh: () => workersPanel.refresh(nowS()),
@@ -302,6 +315,8 @@ sync();
 
 // ---- the dev overlay's numbers: E3 (times) and E5 (frame time while drawing) ----
 const frames = { all: [], drawing: [], idle: [] };
+/** The last ten seconds of frames, behind the Tools panel's FPS chart and its frame rows. */
+const frameLog = new FrameLog();
 const lf = (window.__lf = { workers, style: "classic", light: "day", palette: DEFAULT_PALETTE, look: look(), readyMs: null, firstScreenMs: null, allSetMs: null, firstNames: 0, drawn: 0, missing: "", busyMax: 0 });
 lf.styleSettled = () => pool.settled();
 // Read-only helpers for the scripted run (never a way to build): where a tile is on the screen, whether the sim would take a
@@ -337,6 +352,14 @@ lf.items = (prefix) => {
   for (let o = 0; o + RECORD <= rec.length; o += RECORD) if (table.entries[rec[o]].name.startsWith(prefix)) out.push({ name: table.entries[rec[o]].name, x: rec[o + 1], y: rec[o + 2], ride: rec[o + 11] });
   return out;
 };
+// Read-only, for the turned-ride run (item 9): the names the ghost of tool `tool` on tile (x, y) turned `turn` quarters draws.
+lf.ghostNames = (tool, x, y, turn = 0) => {
+  const rec = api.ghost(tool, x, y, turn, { x: -4000, y: -1000, w: 8000, h: 4000 });
+  const out = [];
+  for (let o = 0; o + RECORD <= rec.length; o += RECORD) out.push(table.entries[rec[o]].name);
+  return out;
+};
+lf.heldTurn = () => hands.turn;
 lf.detail = () => detail;
 // Read-only, for the first screen's time (Task 32): how many of its names each family holds.
 lf.firstFamilies = () => { const n = {}; for (const name of scene.first ?? []) { const f = table.entries.find((e) => e.name === name)?.family; n[f] = (n[f] || 0) + 1; } return Object.entries(n).map(([f, c]) => `${f}: ${c}`).join(", "); };
@@ -346,6 +369,8 @@ lf.workersPanel = () => (workersPanel.isOpen ? workersPanel.words() : null);
 lf.cache = () => ({ bytes: sprites.bytes, cap, fineBytes: sprites.fineBytes, held: sprites.mem.size, blocked: sprites.blockedCount() });
 lf.explain = (name, d) => sprites.explain(name, d);
 lf.pool = () => ({ queued: order.waiting(), working: pool.working });
+// Read-only, for the speed runs (`perf-run.mjs`): the last ten seconds of frames, the pool's counts, and the drawing the last frame did.
+lf.perf = () => ({ frames: frameLog.frames.slice(), drawn: pool.stats.drawn, finished: pool.finished, rebuilds: order.rebuilds, queued: order.waiting(), working: pool.working, tiles: scene.stats.tiles, blits: scene.stats.groundBlits, groundRebuilds: scene.ground?.rebuilds ?? 0, groundBytes: scene.ground?.bytes ?? 0, items: scene.stats.items });
 lf.sharp = () => ({ onScreen: scene.stats.items, below: scene.stats.below, belowNames: scene.stats.belowNames });
 lf.settled = () => pool.settled();
 lf.cost = () => sprites.cost();
@@ -383,6 +408,49 @@ function overlay(t) {
   statsEl.textContent = rows.filter((r) => r !== null).join("\n");
 }
 
+// ---- a guest's card (note 14): her name, the game's stat rows, her latest thought, her picture at 4x following her ----
+let cardId = -1;
+let cardAt = -Infinity;
+const cardEl = document.getElementById("card");
+const card = makeCard(document, cardEl, { onClose: () => closeCard() });
+const portraitCtx = card.portrait.getContext("2d");
+function openCard(id) {
+  if (id < 0) return;
+  cardId = id;
+  cardAt = -Infinity;
+  cardEl.classList.remove("gone");
+  frameCard(nowS());
+}
+function closeCard() {
+  cardId = -1;
+  cardEl.classList.add("gone");
+}
+/** The card's lines four times a second, her portrait every frame; she leaves the park and the card goes. */
+function frameCard(t) {
+  if (cardId < 0) return;
+  if (t - cardAt > 0.25) {
+    cardAt = t;
+    const lines = api.guestLines(cardId);
+    if (!lines.length) return closeCard();
+    card.setLines(lines);
+  }
+  drawPortrait(portraitCtx, card.portrait, api.guestList(cardId), {
+    dpr: devicePixelRatio,
+    entry: (i) => table.entries[i],
+    draw: (req, x, y, now) => sprites.draw(portraitCtx, req, x, y, now),
+    density: (name) => densityFor(table.boxes[name], detail, PORTRAIT_ZOOM),
+    now: t,
+  });
+}
+lf.popups = () => api.popups();
+lf.card = () => ({ open: cardId >= 0, id: cardId, words: cardId >= 0 ? card.words() : [] });
+lf.guestOnScreen = () => {
+  const rec = api.drawList(camera.view(canvas.width, canvas.height, pixelRatio()));
+  const out = [];
+  for (let o = 0; o + RECORD <= rec.length; o += RECORD) if (/^guest_/.test(table.entries[rec[o]].name) && rec[o + 11] < 0) out.push({ name: table.entries[rec[o]].name, x: rec[o + 1], y: rec[o + 2] });
+  return out;
+};
+
 // ---- the ghost: the tile the held tool is over, its picture half see-through, and the price or the sim's refusal ----
 const prefetch = new Prefetch(api.barNames(), table.entries);
 const GHOST_OK = "rgba(255, 255, 255, 0.28)";
@@ -390,7 +458,7 @@ const GHOST_NO = "rgba(214, 60, 60, 0.38)";
 function drawGhost(ctx, view) {
   if (hands.tool === null || hands.cursor === null) return null;
   const { x, y } = hands.cursor;
-  const v = api.toolTest(hands.tool, x, y, hands.turn);
+  const { verdict: v, rec } = api.held(hands.tool, x, y, hands.turn, view);
   const d = diamond(x, y);
   ctx.save();
   ctx.beginPath();
@@ -403,7 +471,6 @@ function drawGhost(ctx, view) {
   ctx.stroke();
   ctx.restore();
   if (v.ok) {
-    const rec = api.ghost(hands.tool, x, y, hands.turn, view);
     for (let o = 0; o + RECORD <= rec.length; o += RECORD) {
       const e = table.entries[rec[o]];
       sprites.ghost(ctx, { name: e.name, family: e.family, x: rec[o + 1], y: rec[o + 2] }, rec[o + 1], rec[o + 2]);
@@ -473,10 +540,10 @@ let flashUntil = 0;
 let shownTick = "";
 let shownBacklog = -1;
 function showBars(nowMs) {
-  const width = backlog.read(pool.waiting);
+  const width = backlog.read(pool.burst.have, pool.burst.of);
   if (pool.waiting > 0) {
     if (wasEmpty) batchPeak = 0;
-    batchPeak = Math.max(batchPeak, backlog.peak);
+    batchPeak = Math.max(batchPeak, pool.waiting);
     wasEmpty = false;
   } else wasEmpty = true;
   const segs = tickSegments(batchPeak || 20);
@@ -528,8 +595,13 @@ function loop() {
   last = tNow;
   owed = Math.min(owed + dt / (1000 / 60), 12); // a long stall owes at most twelve steps, so it never spirals
   const steps = Math.floor(owed);
+  let simMs = 0;
   if (steps) {
-    if (speed) api.step(steps * speed);
+    if (speed) {
+      const simAt = performance.now();
+      api.step(steps * speed);
+      simMs = performance.now() - simAt;
+    }
     owed -= steps;
   }
   const view = camera.view(canvas.width, canvas.height, pixelRatio());
@@ -542,18 +614,22 @@ function loop() {
   ctx.imageSmoothingEnabled = false;
   const t = nowS();
   scene.frame(ctx, view, t, { zoom: screenZoom(camera.zoom, devicePixelRatio), detail });
+  drawPopups(ctx, api.popups());
+  frameCard(t);
   showSharpening(t);
   showBars(performance.now());
   workersPanel.frame(t);
   if (tray.open === TOOLS && t - panelAt > 0.25) {
     panelAt = t;
     panel.setStats({ ...sprites.cost(), wait: clock.seconds(t), busy: pool.working, total: pool.size });
+    panel.setPerf(perfRows(frameLog.now()), chartPoints(frameLog, CHART_W, CHART_H));
   }
   drawInMarks(ctx, t);
   const verdict = drawGhost(ctx, view);
   showRows(verdict);
   if (scene.firstDoneAt !== null && !q.has("noprefetch")) for (const r of prefetch.take(true, view)) pool.request(r);
 
+  if (frameLog.frames.length || dt < 1000) frameLog.push({ at: t, dt, sim: simMs, list: scene.stats.listMs, ground: scene.stats.groundMs, sprites: scene.stats.items, work: performance.now() - tNow });
   const busy = order.waiting() > 0 || pool.working > 0;
   if (frames.all.length || dt < 1000) {
     frames.all.push(dt);

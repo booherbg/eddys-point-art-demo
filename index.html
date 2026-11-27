@@ -46,6 +46,14 @@
   .label { display: block; }
   #panel, #looks, #about { position: fixed; right: 8px; top: calc(var(--top-h) + 6px); box-sizing: border-box; max-width: calc(100vw - 16px); padding: 8px; display: flex; flex-direction: column; gap: 6px;
            background: #2a1c3e; color: #f4efe6; border: 2px solid #14101c; border-radius: 4px; font: 600 13px/1.1 ui-monospace, Menlo, monospace; }
+  #card { position: fixed; left: 8px; top: calc(var(--top-h) + 6px); box-sizing: border-box; width: min(300px, calc(100vw - 16px)); padding: 8px; display: flex; flex-direction: column; gap: 6px;
+          background: #2a1c3e; color: #f4efe6; border: 2px solid #14101c; border-radius: 4px; font: 600 13px/1.25 ui-monospace, Menlo, monospace; z-index: 4; }
+  #card .cardtitle { font-weight: 700; font-size: 15px; }
+  #card .cardbody { display: flex; gap: 10px; align-items: flex-start; }
+  #card .portrait { flex: 0 0 auto; width: 96px; height: 136px; background: #3d2f55; border-radius: 3px; image-rendering: pixelated; touch-action: auto; cursor: default; }
+  #card .cardrows { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  #card .stat.thought { margin-top: 4px; font-weight: 400; }
+  #card .btn { align-self: flex-start; min-height: 32px; padding: 4px 12px; flex-direction: row; }
   #about { max-height: calc(100vh - var(--top-h) - var(--bottom-h) - 24px); max-height: calc(100dvh - var(--top-h) - var(--bottom-h) - 24px); overflow-y: auto; width: 340px; font-weight: 400; line-height: 1.4; gap: 10px; }
   #about h2 { margin: 0; font: 700 15px/1.3 ui-monospace, Menlo, monospace; }
   #about p { margin: 0; }
@@ -55,6 +63,7 @@
   #panel .btn { flex: 0 0 auto; min-width: 44px; min-height: 32px; flex-direction: row; gap: 5px; padding: 4px 8px; }
   #panel .actions { gap: 6px; flex-wrap: wrap; }
   #panel .stat { white-space: nowrap; }
+  #panel .chart { width: 100%; max-width: 360px; height: auto; aspect-ratio: 232 / 56; image-rendering: auto; border-radius: 2px; }
   .wpanel { position: fixed; z-index: 6; left: 8px; top: calc(var(--top-h) + 6px); box-sizing: border-box; width: 292px; max-width: calc(100vw - 16px); max-height: calc(100vh - 130px); overflow-y: auto;
             padding: 8px; display: flex; flex-direction: column; gap: 5px; background: #2a1c3e; color: #f4efe6; border: 2px solid #14101c; border-radius: 4px;
             font: 600 13px/1.15 ui-monospace, Menlo, monospace; }
@@ -102,6 +111,11 @@
     #topright > .btn.about { flex: 0 0 44px; }
     #about { width: auto; left: 8px; }
     #looks .rowlabel { flex: 0 0 56px; padding: 0; }
+    /* Seven Detail steps do not fit beside their label on a phone: the label has the line to itself, the steps share the next. */
+    #panel .row:not(.actions) { flex-wrap: wrap; gap: 4px; }
+    #panel .row:not(.actions) .rowlabel { flex: 1 1 100%; padding: 0 2px; }
+    #panel .row:not(.actions) .group { flex: 1 1 100%; }
+    #panel .row:not(.actions) .btn { flex: 1 1 0; min-width: 0; padding: 4px 2px; gap: 4px; }
     #looks .btn { min-width: 0; padding: 4px 6px; }
   }
 </style>
@@ -113,6 +127,7 @@
 <div id="tip" class="gone"></div>
 <div id="tray" class="bar gone"></div>
 <div id="panel" class="gone"></div>
+<div id="card" class="gone"></div>
 <div id="looks" class="gone"><div id="styles" class="group"></div><div id="lights" class="group"></div><div id="palettes" class="group"></div></div>
 <div id="about" class="gone"></div>
 <div id="bottom" class="bar"><div id="tools" class="group"></div></div>
